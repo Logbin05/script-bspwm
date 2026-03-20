@@ -79,11 +79,14 @@ PACKAGES=(
   feh
   firefox
   git
+  i3lock-color
+  imagemagick
   libnotify
   light-locker
   lightdm
   lightdm-slick-greeter
   lxappearance
+  maim
   network-manager-applet
   networkmanager
   noto-fonts
@@ -106,6 +109,7 @@ PACKAGES=(
   xorg-xinit
   xorg-xrandr
   xorg-xsetroot
+  xss-lock
   yad
 )
 
@@ -194,16 +198,132 @@ write_lock_screen() {
 #!/usr/bin/env bash
 set -euo pipefail
 
-if command -v light-locker-command >/dev/null 2>&1; then
-  exec light-locker-command -l
+cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/imba-lock"
+shot_file="${cache_dir}/shot.png"
+lock_file="${cache_dir}/lock.png"
+avatar_file="${HOME}/.face"
+
+if [[ -f "${HOME}/Pictures/avatar.png" ]]; then
+  avatar_file="${HOME}/Pictures/avatar.png"
 fi
 
-if command -v dm-tool >/dev/null 2>&1; then
-  exec dm-tool switch-to-greeter
+fallback_lock() {
+  if command -v light-locker-command >/dev/null 2>&1; then
+    exec light-locker-command -l
+  fi
+
+  if command -v dm-tool >/dev/null 2>&1; then
+    exec dm-tool switch-to-greeter
+  fi
+
+  printf 'Не удалось заблокировать экран: i3lock/light-locker/dm-tool не найдены.\n' >&2
+  exit 1
+}
+
+capture_screen() {
+  if command -v maim >/dev/null 2>&1; then
+    maim -u "${shot_file}" && return 0
+  fi
+
+  if command -v import >/dev/null 2>&1; then
+    import -window root "${shot_file}" && return 0
+  fi
+
+  return 1
+}
+
+[[ -n "${DISPLAY:-}" ]] || fallback_lock
+command -v i3lock >/dev/null 2>&1 || fallback_lock
+
+mkdir -p "${cache_dir}"
+
+if ! capture_screen; then
+  if [[ -f "${HOME}/Pictures/Wallpapers/wallpaper.jpg" ]]; then
+    cp "${HOME}/Pictures/Wallpapers/wallpaper.jpg" "${shot_file}"
+  else
+    if command -v convert >/dev/null 2>&1; then
+      convert -size 1920x1080 "xc:#101418" "${shot_file}"
+    else
+      fallback_lock
+    fi
+  fi
 fi
 
-printf 'Не найден light-locker или dm-tool.\n' >&2
-exit 1
+time_text="$(date '+%H:%M')"
+date_text="$(date '+%A, %d %B')"
+user_text="$(id -un)@$(hostname -s)"
+
+if command -v convert >/dev/null 2>&1; then
+  convert "${shot_file}" \
+    -resize 50% -blur 0x7 -resize 200% \
+    -fill '#10141877' -colorize 35 \
+    "${lock_file}"
+
+  if [[ -f "${avatar_file}" ]]; then
+    avatar_tmp="${cache_dir}/avatar-circle.png"
+    convert "${avatar_file}" \
+      -resize 170x170^ \
+      -gravity center -extent 170x170 \
+      \( -size 170x170 xc:none -fill white -draw 'circle 85,85 85,6' \) \
+      -compose copyopacity -composite \
+      "${avatar_tmp}" || true
+
+    if [[ -f "${avatar_tmp}" ]]; then
+      convert "${lock_file}" "${avatar_tmp}" \
+        -gravity center -geometry +0-110 -composite \
+        "${lock_file}"
+    fi
+  fi
+
+  convert "${lock_file}" \
+    -font 'JetBrainsMono Nerd Font' -pointsize 64 -fill '#F5F7FA' -gravity center -annotate +0+42 "${time_text}" \
+    -font 'JetBrainsMono Nerd Font' -pointsize 20 -fill '#93A0AD' -gravity center -annotate +0+98 "${date_text}" \
+    -font 'JetBrainsMono Nerd Font' -pointsize 16 -fill '#84D8C2' -gravity center -annotate +0+132 "${user_text}" \
+    "${lock_file}" || cp "${shot_file}" "${lock_file}"
+else
+  cp "${shot_file}" "${lock_file}"
+fi
+
+if i3lock \
+  --nofork \
+  --ignore-empty-password \
+  --show-failed-attempts \
+  --indicator \
+  --radius=108 \
+  --ring-width=12 \
+  --inside-color=101418b5 \
+  --ring-color=84d8c288 \
+  --line-color=00000000 \
+  --keyhl-color=8fb9ffff \
+  --bshl-color=f49bb4ff \
+  --separator-color=00000000 \
+  --insidever-color=84d8c2aa \
+  --ringver-color=84d8c2ff \
+  --insidewrong-color=f49bb4aa \
+  --ringwrong-color=f49bb4ff \
+  --verif-color=f5f7faff \
+  --wrong-color=f5f7faff \
+  --layout-color=8fb9ffff \
+  --date-color=93a0adff \
+  --time-color=f5f7faff \
+  --verif-text='Проверка...' \
+  --wrong-text='Неверный пароль' \
+  --noinput-text='' \
+  --clock \
+  --time-str='%H:%M' \
+  --date-str='%a %d %b' \
+  --image="${lock_file}" \
+  --pass-media-keys \
+  --pass-screen-keys \
+  --pass-volume-keys; then
+  exit 0
+fi
+
+if i3lock --nofork --image="${lock_file}"; then
+  exit 0
+fi
+
+fallback_lock
 EOF
 
   chmod +x "${LOCAL_BIN}/lock-screen"
@@ -1279,7 +1399,7 @@ write_bspwm_config() {
 pgrep -x sxhkd >/dev/null || sxhkd &
 pgrep -x picom >/dev/null || picom --config "$HOME/.config/picom/picom.conf" &
 pgrep -x dunst >/dev/null || dunst &
-pgrep -x light-locker >/dev/null || light-locker --lock-on-suspend --no-late-locking &
+pgrep -x xss-lock >/dev/null || xss-lock --transfer-sleep-lock -- "$HOME/.local/bin/lock-screen" &
 
 "$HOME/.local/bin/launch-polybar"
 
@@ -2310,7 +2430,7 @@ print_next_steps() {
   echo "   Alt+Ctrl+b         -> перезапуск bar"
   echo "   Alt+Ctrl+a         -> arch-access (приватные файлы)"
   echo "   Alt+Ctrl+u         -> обновить setup-скрипт"
-  echo "   Alt+Shift+l        -> lock screen с логином/паролем"
+  echo "   Alt+Shift+l        -> кастомный lock screen (imba)"
   echo "   Alt+Shift+u        -> обновление системы"
   echo
   echo "Верхняя панель теперь минималистичная, но информативная: звук, сеть, Bluetooth, дата, обновления и быстрые действия."

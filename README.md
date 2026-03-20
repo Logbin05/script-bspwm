@@ -9,7 +9,7 @@
 - быстрые пресеты бара через `~/.local/bin/polybar-preset` (`focus`, `balanced`, `monitoring`)
 - `App Deck` для выбора приложений через красивую сетку `rofi`
 - `quick hub`, отдельные окна настроек приложений и системных настроек
-- нормальный `lock screen` через `LightDM + slick-greeter + light-locker` с логином, паролем и аватаром
+- полностью кастомный `lock screen` на `i3lock-color`: blur фон, время/дата, акцентные состояния, аватар и fallback на greeter
 - `ssh-agent`, привязанный к учётке, плюс helper для привязки SSH ключа без ручного запуска агента
 - команда `~/.local/bin/arch-access` для доступа к приватным файлам и директориям через `sudoedit`/root-shell
 - мягкие fade/blur/shadow-эффекты через `picom`
@@ -34,7 +34,7 @@ sudo reboot
 - `Alt+s` откроет системные настройки
 - `Alt+,` откроет настройки приложений
 - `Alt+Shift+p` откроет power menu
-- `Alt+Shift+l` откроет lock screen с логином/паролем
+- `Alt+Shift+l` откроет новый кастомный lock screen
 - `Alt+Ctrl+a` откроет `arch-access` для приватных файлов
 - `Alt+Ctrl+u` проверит обновления самого setup-скрипта
 - при открытии интерактивного терминала будет показываться `fastfetch`
