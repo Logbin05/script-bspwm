@@ -123,6 +123,8 @@ BACKUP_TARGETS=(
   "${CONFIG_DIR}/rofi/menu.rasi"
   "${CONFIG_DIR}/sxhkd/sxhkdrc"
   "${LOCAL_BIN}/app-settings"
+  "${LOCAL_BIN}/arch-access"
+  "${LOCAL_BIN}/bar-context-menu"
   "${LOCAL_BIN}/control-center"
   "${LOCAL_BIN}/dropdown-terminal"
   "${LOCAL_BIN}/launch-polybar"
@@ -260,6 +262,130 @@ EOF
   chmod +x "${LOCAL_BIN}/open-app-launcher"
 }
 
+write_arch_access_script() {
+  cat > "${LOCAL_BIN}/arch-access" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+print_help() {
+  cat <<'USAGE'
+Использование: arch-access [путь]
+
+- Без аргументов покажет быстрый выбор пути через rofi (или запрос в терминале).
+- Если путь указывает на папку, откроется root-shell в этой директории.
+- Если путь указывает на файл, откроется sudoedit через твой EDITOR.
+USAGE
+}
+
+pick_target() {
+  local target=""
+
+  if command -v rofi >/dev/null 2>&1 && [[ -n "${DISPLAY:-}" ]]; then
+    target="$(
+      printf '%s\n' \
+        '/etc/' \
+        '/etc/pacman.conf' \
+        '/etc/ssh/sshd_config' \
+        '/var/log/' \
+        '/root/' \
+        '/usr/local/etc/' |
+        rofi -dmenu -i -p "arch-access path" -theme "$HOME/.config/rofi/menu.rasi" || true
+    )"
+  else
+    printf 'Введи путь для arch-access: ' >&2
+    read -r target || true
+  fi
+
+  printf '%s' "${target}"
+}
+
+normalize_target() {
+  local raw="$1"
+
+  raw="${raw/#\~/$HOME}"
+  if [[ "${raw}" != /* ]]; then
+    raw="$(realpath -m "$PWD/$raw")"
+  fi
+
+  printf '%s' "${raw}"
+}
+
+open_privileged_target() {
+  local target="$1"
+
+  if [[ -d "${target}" ]]; then
+    exec alacritty --class settings-editor -e sudo -E env ARCH_ACCESS_DIR="${target}" bash -lc '
+cd "$ARCH_ACCESS_DIR" || exit 1
+printf "arch-access: root-shell in %s\n" "$ARCH_ACCESS_DIR"
+exec ${SHELL:-bash} -l
+'
+  fi
+
+  exec alacritty --class settings-editor -e env ARCH_ACCESS_FILE="${target}" bash -lc '
+editor="${EDITOR:-nano}"
+command -v "$editor" >/dev/null 2>&1 || editor=vi
+export EDITOR="$editor"
+exec sudoedit "$ARCH_ACCESS_FILE"
+'
+}
+
+arg="${1:-}"
+
+case "${arg}" in
+  -h|--help)
+    print_help
+    exit 0
+    ;;
+esac
+
+if [[ -z "${arg}" ]]; then
+  arg="$(pick_target)"
+fi
+
+[[ -n "${arg}" ]] || exit 0
+
+target="$(normalize_target "${arg}")"
+open_privileged_target "${target}"
+EOF
+
+  chmod +x "${LOCAL_BIN}/arch-access"
+}
+
+write_bar_context_menu_script() {
+  cat > "${LOCAL_BIN}/bar-context-menu" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+choice="$(
+  printf '%s\n' \
+    '󰀻  Запуск приложений' \
+    '󰛳  Настройки приложений' \
+    '󰒓  Системные настройки' \
+    '󰖟  Polybar preset' \
+    '󰇚  Polybar custom' \
+    '󱎓  Приватные файлы (arch-access)' \
+    '󰈆  Перезапустить bar' \
+    '󰏗  Обновить систему' \
+    '󰐥  Меню питания' |
+    rofi -dmenu -i -p "context" -theme "$HOME/.config/rofi/menu.rasi" || true
+)"
+
+case "${choice}" in
+  "󰀻  Запуск приложений") exec "$HOME/.local/bin/open-app-launcher" ;;
+  "󰛳  Настройки приложений") exec "$HOME/.local/bin/app-settings" ;;
+  "󰒓  Системные настройки") exec "$HOME/.local/bin/system-settings" ;;
+  "󰖟  Polybar preset") exec "$HOME/.local/bin/polybar-preset" ;;
+  "󰇚  Polybar custom") exec "$HOME/.local/bin/app-settings" panel-custom ;;
+  "󱎓  Приватные файлы (arch-access)") exec "$HOME/.local/bin/arch-access" ;;
+  "󰈆  Перезапустить bar") exec "$HOME/.local/bin/launch-polybar" ;;
+  "󰏗  Обновить систему") exec "$HOME/.local/bin/update-system" ;;
+  "󰐥  Меню питания") exec "$HOME/.local/bin/power-menu" ;;
+esac
+EOF
+
+  chmod +x "${LOCAL_BIN}/bar-context-menu"
+}
+
 write_control_center_script() {
   cat > "${LOCAL_BIN}/control-center" <<'EOF'
 #!/usr/bin/env bash
@@ -270,6 +396,7 @@ choice="$(
     '󰀻  Запуск приложений' \
     '󰛳  Настройки приложений' \
     '󰒓  Системные настройки' \
+    '󱎓  Приватные файлы' \
     '󰏗  Обновить систему' \
     '󰐥  Меню питания' |
     rofi -dmenu -i -p "hub" -theme "$HOME/.config/rofi/menu.rasi" || true
@@ -279,6 +406,7 @@ case "${choice}" in
   "󰀻  Запуск приложений") exec "$HOME/.local/bin/open-app-launcher" ;;
   "󰛳  Настройки приложений") exec "$HOME/.local/bin/app-settings" ;;
   "󰒓  Системные настройки") exec "$HOME/.local/bin/system-settings" ;;
+  "󱎓  Приватные файлы") exec "$HOME/.local/bin/arch-access" ;;
   "󰏗  Обновить систему") exec "$HOME/.local/bin/update-system" ;;
   "󰐥  Меню питания") exec "$HOME/.local/bin/power-menu" ;;
 esac
@@ -549,6 +677,7 @@ open_target() {
     appearance) exec lxappearance ;;
     avatar) exec "$HOME/.local/bin/set-user-avatar" --pick ;;
     ssh) exec "$HOME/.local/bin/bind-ssh-key" --pick ;;
+    private-files) exec "$HOME/.local/bin/arch-access" ;;
     updates) exec "$HOME/.local/bin/update-system" ;;
     power) exec "$HOME/.local/bin/power-menu" ;;
     *) exit 0 ;;
@@ -579,6 +708,7 @@ choice="$(
     "Внешний вид" "GTK-тема, иконки, курсор и шрифты" \
     "Аватар" "Фото пользователя для greeter и lock screen" \
     "SSH ключ" "Привязка SSH ключа к учётке и авто-agent" \
+    "Приватные файлы" "Открыть защищённые пути через arch-access" \
     "Обновления" "Полное обновление Arch-системы" \
     "Питание" "Lock, suspend, reboot и shutdown" \
     --button="Открыть:0" \
@@ -596,6 +726,7 @@ case "${selection}" in
   "Внешний вид") open_target appearance ;;
   Аватар) open_target avatar ;;
   "SSH ключ") open_target ssh ;;
+  "Приватные файлы") open_target private-files ;;
   Обновления) open_target updates ;;
   Питание) open_target power ;;
 esac
@@ -1018,6 +1149,13 @@ super + ctrl + b
 alt + ctrl + b
     ~/.local/bin/launch-polybar
 
+# privileged file access
+super + ctrl + a
+    ~/.local/bin/arch-access
+
+alt + ctrl + a
+    ~/.local/bin/arch-access
+
 # desktops
 super + {1-9,0}
     bspc desktop -f '^{1-9,10}'
@@ -1149,7 +1287,7 @@ content-background = \${colors.surface}
 content-foreground = \${colors.accent}
 content-padding = 2
 click-left = ~/.local/bin/open-app-launcher
-click-right = ~/.local/bin/control-center
+click-right = ~/.local/bin/bar-context-menu
 
 [module/bspwm]
 type = internal/bspwm
@@ -1198,6 +1336,7 @@ interval = 1
 format-background = \${colors.surface-alt}
 format-foreground = \${colors.secondary}
 format-padding = 2
+click-right = ~/.local/bin/bar-context-menu
 
 [module/xwindow]
 type = internal/xwindow
@@ -1207,6 +1346,7 @@ format-padding = 2
 label = %title:0:54:...%
 label-empty = workspace
 label-empty-foreground = \${colors.muted}
+click-right = ~/.local/bin/bar-context-menu
 
 [module/updates]
 type = custom/script
@@ -1216,7 +1356,7 @@ format-background = \${colors.surface}
 format-foreground = \${colors.accent}
 format-padding = 2
 click-left = ~/.local/bin/update-system
-click-right = ~/.local/bin/control-center
+click-right = ~/.local/bin/bar-context-menu
 
 [module/cpu]
 type = internal/cpu
@@ -1303,6 +1443,7 @@ format-background = \${colors.surface}
 format-foreground = \${colors.foreground}
 format-padding = 2
 label = 󰃭 %time%  %date%
+click-right = ~/.local/bin/bar-context-menu
 
 [module/control]
 type = custom/text
@@ -1311,7 +1452,7 @@ content-background = \${colors.surface}
 content-foreground = \${colors.secondary}
 content-padding = 2
 click-left = ~/.local/bin/control-center
-click-right = ~/.local/bin/system-settings
+click-right = ~/.local/bin/bar-context-menu
 
 [module/power]
 type = custom/text
@@ -1861,14 +2002,17 @@ print_next_steps() {
   echo "3. Если хочешь привязать свой SSH ключ вручную:"
   echo "   ~/.local/bin/bind-ssh-key --pick"
   echo
-  echo "4. Кастомизация bar без ломки core:"
+  echo "4. Доступ к приватным файлам:"
+  echo "   ~/.local/bin/arch-access"
+  echo
+  echo "5. Кастомизация bar без ломки core:"
   echo "   ~/.config/polybar/user.ini"
   echo "   ~/.local/bin/polybar-preset"
   echo
-  echo "5. Перезагрузи систему:"
+  echo "6. Перезагрузи систему:"
   echo "   sudo reboot"
   echo
-  echo "6. Главные хоткеи:"
+  echo "7. Главные хоткеи:"
   echo "   Alt+Return         -> терминал в тайлинге"
   echo "   Alt+Shift+Return   -> ещё один терминал"
   echo "   Alt+d              -> App Deck / выбор приложений"
@@ -1880,11 +2024,13 @@ print_next_steps() {
   echo "   Alt+e              -> Thunar"
   echo "   Alt+q              -> закрыть окно"
   echo "   Alt+Ctrl+b         -> перезапуск bar"
+  echo "   Alt+Ctrl+a         -> arch-access (приватные файлы)"
   echo "   Alt+Shift+l        -> lock screen с логином/паролем"
   echo "   Alt+Shift+u        -> обновление системы"
   echo
   echo "Верхняя панель по умолчанию сбалансирована для работы: звук, сеть, Bluetooth, дата, трей и быстрые действия."
   echo "Через ~/.local/bin/polybar-preset можно моментально включить monitoring-профиль с CPU/RAM."
+  echo "Правый клик по ключевым модулям bar открывает новое контекстное меню."
   echo "Сессия теперь поднимается через LightDM: есть greeter, поля логина/пароля и аватар пользователя."
   echo "Столы в баре ужаты до цифр, а активный рабочий стол вынесен отдельным индикатором справа."
   echo "Если bar не поднялся, смотри лог: ~/.cache/polybar/main.log"
@@ -1908,6 +2054,8 @@ main() {
   write_launch_polybar_script
   write_update_script
   write_launcher_script
+  write_arch_access_script
+  write_bar_context_menu_script
   write_control_center_script
   write_power_menu_script
   write_polybar_preset_script
