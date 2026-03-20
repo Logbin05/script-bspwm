@@ -57,9 +57,9 @@ done || true)"
 BATTERY_NAME="${BATTERY_NAME:-BAT0}"
 AC_NAME="${AC_NAME:-AC}"
 
-POLYBAR_RIGHT_MODULES="current-desktop updates cpu memory pulseaudio network bluetooth date control power"
+POLYBAR_RIGHT_MODULES="current-desktop updates cpu memory pulseaudio network bluetooth date tray control power"
 if [[ -d "/sys/class/power_supply/${BATTERY_NAME}" ]]; then
-  POLYBAR_RIGHT_MODULES="current-desktop updates cpu memory pulseaudio network bluetooth battery date control power"
+  POLYBAR_RIGHT_MODULES="current-desktop updates cpu memory pulseaudio network bluetooth battery date tray control power"
 fi
 
 PACKAGES=(
@@ -113,6 +113,7 @@ BACKUP_TARGETS=(
   "${CONFIG_DIR}/gtk-4.0/settings.ini"
   "${CONFIG_DIR}/picom/picom.conf"
   "${CONFIG_DIR}/polybar/config.ini"
+  "${CONFIG_DIR}/polybar/user.ini"
   "${CONFIG_DIR}/polybar/scripts/network-status"
   "${CONFIG_DIR}/polybar/scripts/bluetooth-status"
   "${CONFIG_DIR}/polybar/scripts/current-desktop-status"
@@ -446,6 +447,7 @@ open_target() {
     firefox) exec firefox --new-window about:preferences ;;
     terminal) open_terminal_editor "$HOME/.config/alacritty/alacritty.toml" ;;
     panel) open_terminal_editor "$HOME/.config/polybar/config.ini" ;;
+    panel-custom) open_terminal_editor "$HOME/.config/polybar/user.ini" ;;
     launcher) open_terminal_editor "$HOME/.config/rofi/launcher.rasi" ;;
     notifications) open_terminal_editor "$HOME/.config/dunst/dunstrc" ;;
     compositor) open_terminal_editor "$HOME/.config/picom/picom.conf" ;;
@@ -473,6 +475,7 @@ choice="$(
     "Firefox" "about:preferences, стартовая страница и приватность" \
     "Alacritty" "Конфиг прозрачности, шрифта и цветов" \
     "Polybar" "Главный конфиг информативного хедбара" \
+    "Polybar Custom" "Твой личный слой кастомизации bar без правки core" \
     "Rofi Launcher" "Сетка приложений и quick hub" \
     "Dunst" "Уведомления и их оформление" \
     "Picom" "Сглаживание, тени и плавность" \
@@ -487,6 +490,7 @@ case "${selection}" in
   Firefox) open_target firefox ;;
   Alacritty) open_target terminal ;;
   Polybar) open_target panel ;;
+  "Polybar Custom") open_target panel-custom ;;
   "Rofi Launcher") open_target launcher ;;
   Dunst) open_target notifications ;;
   Picom) open_target compositor ;;
@@ -692,6 +696,42 @@ EOF
     "${CONFIG_DIR}/polybar/scripts/bluetooth-status" \
     "${CONFIG_DIR}/polybar/scripts/current-desktop-status" \
     "${CONFIG_DIR}/polybar/scripts/updates-status"
+}
+
+write_polybar_user_config() {
+  if [[ -f "${CONFIG_DIR}/polybar/user.ini" ]]; then
+    warn "Polybar user.ini уже существует, оставляю как есть."
+    return
+  fi
+
+  cat > "${CONFIG_DIR}/polybar/user.ini" <<'EOF'
+; Personal Polybar overrides.
+; Измени любые параметры ниже, чтобы настроить бар под себя.
+; После правок можно применить так: super+shift+b
+
+[ui]
+height = 40
+radius = 20
+modules-left = launcher bspwm
+modules-center = xwindow
+modules-right = current-desktop updates cpu memory pulseaudio network bluetooth date tray control power
+
+[colors]
+primary = #79D0B8
+secondary = #F6C177
+alert = #F28FAD
+
+[module/xwindow]
+label = %title:0:64:...%
+
+[module/date]
+date = %a %d %b
+time = %H:%M
+
+; Пример минималистичного профиля:
+; [ui]
+; modules-right = current-desktop pulseaudio network battery date tray power
+EOF
 }
 
 write_bspwm_config() {
@@ -902,6 +942,10 @@ EOF
 
 write_polybar_config() {
   cat > "${CONFIG_DIR}/polybar/config.ini" <<EOF
+[settings]
+screenchange-reload = true
+pseudo-transparency = true
+
 [colors]
 background = #D9101418
 surface = #F1161B21
@@ -914,29 +958,46 @@ alert = #F28FAD
 border = #2B343F
 shadow = #00000000
 
-[bar/main]
+[ui]
 width = 96%
 offset-x = 2%
 offset-y = 12
 height = 40
 radius = 20
+padding-left = 2
+padding-right = 2
+module-margin = 1
+font-main = JetBrainsMono Nerd Font:size=10;2
+font-emoji = Noto Color Emoji:size=10;1
+modules-left = launcher bspwm
+modules-center = xwindow
+modules-right = ${POLYBAR_RIGHT_MODULES}
+
+[bar/main]
+width = \${ui.width}
+offset-x = \${ui.offset-x}
+offset-y = \${ui.offset-y}
+height = \${ui.height}
+radius = \${ui.radius}
 background = \${colors.background}
 foreground = \${colors.foreground}
 border-size = 1
 border-color = \${colors.border}
-padding-left = 2
-padding-right = 2
-module-margin = 1
-separator =
+padding-left = \${ui.padding-left}
+padding-right = \${ui.padding-right}
+module-margin = \${ui.module-margin}
+separator = " "
 wm-restack = bspwm
 enable-ipc = true
 cursor-click = pointer
 cursor-scroll = ns-resize
-font-0 = JetBrainsMono Nerd Font:size=10;2
-font-1 = Noto Color Emoji:size=10;1
-modules-left = launcher bspwm
-modules-center = xwindow
-modules-right = ${POLYBAR_RIGHT_MODULES}
+font-0 = \${ui.font-main}
+font-1 = \${ui.font-emoji}
+modules-left = \${ui.modules-left}
+modules-center = \${ui.modules-center}
+modules-right = \${ui.modules-right}
+scroll-up = bspc desktop -f prev.local
+scroll-down = bspc desktop -f next.local
 
 [module/base]
 format-background = \${colors.surface}
@@ -981,10 +1042,10 @@ label-occupied-background = transparent
 label-occupied-foreground = \${colors.foreground}
 label-occupied-padding = 1
 label-occupied-margin = 0
-label-empty = %name%
+label-empty =
 label-empty-background = transparent
 label-empty-foreground = \${colors.muted}
-label-empty-padding = 1
+label-empty-padding = 0
 label-empty-margin = 0
 label-urgent = %name%
 label-urgent-background = transparent
@@ -1122,6 +1183,15 @@ content-foreground = \${colors.alert}
 content-padding = 2
 click-left = ~/.local/bin/power-menu
 click-right = ~/.local/bin/lock-screen
+
+[module/tray]
+type = internal/tray
+format-background = \${colors.surface}
+format-padding = 1
+tray-spacing = 8
+tray-size = 65%
+
+include-file = ~/.config/polybar/user.ini
 EOF
 }
 
@@ -1637,10 +1707,13 @@ print_next_steps() {
   echo "3. Если хочешь привязать свой SSH ключ вручную:"
   echo "   ~/.local/bin/bind-ssh-key --pick"
   echo
-  echo "4. Перезагрузи систему:"
+  echo "4. Кастомизация bar без ломки core:"
+  echo "   ~/.config/polybar/user.ini"
+  echo
+  echo "5. Перезагрузи систему:"
   echo "   sudo reboot"
   echo
-  echo "5. Главные хоткеи:"
+  echo "6. Главные хоткеи:"
   echo "   Alt+Return         -> терминал в тайлинге"
   echo "   Alt+Shift+Return   -> ещё один терминал"
   echo "   Alt+d              -> App Deck / выбор приложений"
@@ -1683,6 +1756,7 @@ main() {
   write_app_settings_script
   write_system_settings_script
   write_polybar_scripts
+  write_polybar_user_config
   write_bspwm_config
   write_sxhkd_config
   write_polybar_config
