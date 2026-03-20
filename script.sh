@@ -1,9 +1,26 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-USER_HOME="${HOME}"
+if [[ $EUID -eq 0 ]]; then
+  echo "Запускай этот скрипт от обычного пользователя, не от root."
+  exit 1
+fi
+
+USER_NAME="${SUDO_USER:-$USER}"
+USER_HOME="$(getent passwd "$USER_NAME" | cut -d: -f6)"
 CONFIG_DIR="${USER_HOME}/.config"
-WALLPAPER="${USER_HOME}/Pictures/Wallpapers/wallpaper.jpg"
+WALL_DIR="${USER_HOME}/Pictures/Wallpapers"
+WALLPAPER="${WALL_DIR}/wallpaper.jpg"
+
+BATTERY_NAME="$(for d in /sys/class/power_supply/*; do
+  [[ -f "$d/type" ]] && grep -qx 'Battery' "$d/type" && basename "$d" && break
+done || true)"
+AC_NAME="$(for d in /sys/class/power_supply/*; do
+  [[ -f "$d/type" ]] && grep -Eqx 'Mains|USB|USB_C|USB_PD' "$d/type" && basename "$d" && break
+done || true)"
+
+BATTERY_NAME="${BATTERY_NAME:-BAT0}"
+AC_NAME="${AC_NAME:-AC}"
 
 PACKAGES=(
   bspwm
@@ -12,20 +29,26 @@ PACKAGES=(
   xorg-xinit
   alacritty
   picom
-  dunst
   feh
   polybar
   rofi
+  dunst
   firefox
   thunar
-  lxappearance
-  qt5ct
-  qt6ct
-  xorg-xrandr
+  networkmanager
+  network-manager-applet
+  blueman
+  bluez
+  bluez-utils
+  i3lock
+  xss-lock
+  pavucontrol
+  fastfetch
   ttf-jetbrains-mono-nerd
   noto-fonts
   noto-fonts-emoji
   papirus-icon-theme
+  dbus
 )
 
 info() {
@@ -34,28 +57,19 @@ info() {
 
 backup_if_exists() {
   local target="$1"
-  if [ -e "$target" ]; then
-    local backup="${target}.bak.$(date +%s)"
-    cp -r "$target" "$backup"
-    echo "[INFO] Backup created: $backup"
+  if [[ -e "$target" ]]; then
+    cp -r "$target" "${target}.bak.$(date +%s)"
   fi
 }
 
-need_cmd() {
-  command -v "$1" >/dev/null 2>&1 || {
-    echo "[ERROR] Command not found: $1"
-    exit 1
-  }
-}
-
-info "Checking required commands"
-need_cmd sudo
-need_cmd pacman
-
-info "Installing packages"
+info "Установка пакетов"
 sudo pacman -Syu --needed --noconfirm "${PACKAGES[@]}"
 
-info "Creating config directories"
+info "Включение сервисов"
+sudo systemctl enable NetworkManager
+sudo systemctl enable bluetooth
+
+info "Создание директорий"
 mkdir -p \
   "${CONFIG_DIR}/bspwm" \
   "${CONFIG_DIR}/sxhkd" \
@@ -64,9 +78,10 @@ mkdir -p \
   "${CONFIG_DIR}/dunst" \
   "${CONFIG_DIR}/picom" \
   "${CONFIG_DIR}/alacritty" \
-  "${USER_HOME}/Pictures/Wallpapers"
+  "${WALL_DIR}" \
+  "${USER_HOME}/.local/bin"
 
-info "Backing up old configs"
+info "Бэкапы конфигов"
 backup_if_exists "${CONFIG_DIR}/bspwm/bspwmrc"
 backup_if_exists "${CONFIG_DIR}/sxhkd/sxhkdrc"
 backup_if_exists "${CONFIG_DIR}/polybar/config.ini"
@@ -75,22 +90,32 @@ backup_if_exists "${CONFIG_DIR}/dunst/dunstrc"
 backup_if_exists "${CONFIG_DIR}/picom/picom.conf"
 backup_if_exists "${CONFIG_DIR}/alacritty/alacritty.toml"
 backup_if_exists "${USER_HOME}/.xinitrc"
-backup_if_exists "${USER_HOME}/.xprofile"
+backup_if_exists "${USER_HOME}/.bash_profile"
+backup_if_exists "${USER_HOME}/.bashrc"
 
-info "Writing bspwm config"
+info "Скрипт блокировки экрана"
+cat > "${USER_HOME}/.local/bin/lock-screen" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+exec i3lock -n -c 0f111a
+EOF
+chmod +x "${USER_HOME}/.local/bin/lock-screen"
+
+info "Конфиг bspwm"
 cat > "${CONFIG_DIR}/bspwm/bspwmrc" <<EOF
 #!/bin/sh
 
 pgrep -x sxhkd >/dev/null || sxhkd &
-pgrep -x picom >/dev/null || picom --config "${CONFIG_DIR}/picom/picom.conf" &
+pgrep -x picom >/dev/null || picom --config "\$HOME/.config/picom/picom.conf" &
 pgrep -x dunst >/dev/null || dunst &
+pgrep -x nm-applet >/dev/null || nm-applet &
+pgrep -x blueman-applet >/dev/null || blueman-applet &
+pgrep -x xss-lock >/dev/null || xss-lock --transfer-sleep-lock -- "\$HOME/.local/bin/lock-screen" &
 pkill polybar >/dev/null 2>&1 || true
 polybar main &
 
-xsetroot -cursor_name left_ptr
-
-if [ -f "${WALLPAPER}" ]; then
-  feh --bg-fill "${WALLPAPER}"
+if [ -f "\$HOME/Pictures/Wallpapers/wallpaper.jpg" ]; then
+  feh --bg-fill "\$HOME/Pictures/Wallpapers/wallpaper.jpg"
 fi
 
 bspc monitor -d I II III IV V VI VII VIII IX X
@@ -102,14 +127,14 @@ bspc config borderless_monocle true
 bspc config gapless_monocle true
 bspc config focus_follows_pointer true
 bspc config pointer_modifier mod1
-
-# Temporary safety: auto-open terminal on login
-alacritty &
+bspc config focused_border_color "#89B4FA"
+bspc config normal_border_color "#313244"
+bspc config active_border_color "#74C7EC"
+bspc config presel_feedback_color "#F38BA8"
 EOF
-
 chmod +x "${CONFIG_DIR}/bspwm/bspwmrc"
 
-info "Writing sxhkd config"
+info "Конфиг sxhkd"
 cat > "${CONFIG_DIR}/sxhkd/sxhkdrc" <<'EOF'
 # terminal
 super + Return
@@ -118,7 +143,7 @@ super + Return
 alt + Return
     alacritty
 
-# launcher
+# app launcher
 super + d
     rofi -show drun
 
@@ -146,6 +171,13 @@ super + q
 alt + q
     bspc node -c
 
+# lock screen
+super + shift + l
+    ~/.local/bin/lock-screen
+
+alt + shift + l
+    ~/.local/bin/lock-screen
+
 # restart sxhkd
 super + shift + r
     pkill sxhkd; sxhkd &
@@ -153,19 +185,12 @@ super + shift + r
 alt + shift + r
     pkill sxhkd; sxhkd &
 
-# restart bspwm
+# restart bspwm config
 super + shift + b
     bspc wm -r
 
 alt + shift + b
     bspc wm -r
-
-# quit session
-super + Escape
-    bspc quit
-
-alt + Escape
-    bspc quit
 
 # desktops
 super + {1-9,0}
@@ -213,10 +238,20 @@ super + m
 
 alt + m
     bspc desktop -l next
+
+# volume
+XF86AudioRaiseVolume
+    pactl set-sink-volume @DEFAULT_SINK@ +5%
+
+XF86AudioLowerVolume
+    pactl set-sink-volume @DEFAULT_SINK@ -5%
+
+XF86AudioMute
+    pactl set-sink-mute @DEFAULT_SINK@ toggle
 EOF
 
-info "Writing polybar config"
-cat > "${CONFIG_DIR}/polybar/config.ini" <<'EOF'
+info "Конфиг polybar"
+cat > "${CONFIG_DIR}/polybar/config.ini" <<EOF
 [colors]
 background = #CC0F111A
 background-alt = #1A1D29
@@ -225,15 +260,14 @@ primary = #89B4FA
 secondary = #F5C2E7
 accent = #A6E3A1
 urgent = #F38BA8
+muted = #6C7086
 
 [bar/main]
 width = 100%
-height = 32
+height = 34
 radius = 0
-background = ${colors.background}
-foreground = ${colors.foreground}
-line-size = 0
-border-size = 0
+background = \${colors.background}
+foreground = \${colors.foreground}
 padding-left = 2
 padding-right = 2
 module-margin = 2
@@ -241,24 +275,19 @@ font-0 = JetBrainsMono Nerd Font:size=11;2
 font-1 = Noto Color Emoji:size=11;1
 modules-left = bspwm
 modules-center = date
-modules-right = cpu memory pulseaudio tray
-cursor-click = pointer
-cursor-scroll = ns-resize
+modules-right = battery pulseaudio tray
 enable-ipc = true
 
 [module/bspwm]
 type = internal/bspwm
 label-focused = %name%
-label-focused-background = ${colors.primary}
+label-focused-background = \${colors.primary}
 label-focused-foreground = #11111b
 label-focused-padding = 2
 label-occupied = %name%
 label-occupied-padding = 2
-label-urgent = %name%!
-label-urgent-background = ${colors.urgent}
-label-urgent-padding = 2
 label-empty = %name%
-label-empty-foreground = #6c7086
+label-empty-foreground = \${colors.muted}
 label-empty-padding = 2
 
 [module/date]
@@ -267,36 +296,130 @@ interval = 1
 date = %H:%M  %d.%m.%Y
 label = %date%
 
-[module/cpu]
-type = internal/cpu
-interval = 2
-label = CPU %percentage%%
-
-[module/memory]
-type = internal/memory
-interval = 2
-label = RAM %percentage_used%%
+[module/battery]
+type = internal/battery
+battery = ${BATTERY_NAME}
+adapter = ${AC_NAME}
+full-at = 99
+poll-interval = 5
+format-charging = 󰂄 <label-charging>
+format-discharging = 󰁹 <label-discharging>
+format-full = 󰂄 <label-full>
+label-charging = %percentage%%
+label-discharging = %percentage%%
+label-full = 100%%
 
 [module/pulseaudio]
 type = internal/pulseaudio
 format-volume = <label-volume>
-label-volume = VOL %percentage%%
-label-muted = muted
+label-volume =   %percentage%%
+label-muted = 󰝟  muted
 
 [module/tray]
 type = internal/tray
 tray-spacing = 8
 EOF
 
-info "Writing rofi config"
+info "Конфиг alacritty"
+cat > "${CONFIG_DIR}/alacritty/alacritty.toml" <<'EOF'
+[window]
+opacity = 0.88
+padding = { x = 12, y = 12 }
+
+[font]
+normal = { family = "JetBrainsMono Nerd Font", style = "Regular" }
+bold = { family = "JetBrainsMono Nerd Font", style = "Bold" }
+italic = { family = "JetBrainsMono Nerd Font", style = "Italic" }
+size = 11.5
+
+[colors.primary]
+background = "#0F111A"
+foreground = "#E6E9EF"
+
+[colors.cursor]
+text = "#0F111A"
+cursor = "#89B4FA"
+
+[colors.normal]
+black = "#1A1D29"
+red = "#F38BA8"
+green = "#A6E3A1"
+yellow = "#F9E2AF"
+blue = "#89B4FA"
+magenta = "#F5C2E7"
+cyan = "#94E2D5"
+white = "#BAC2DE"
+
+[colors.bright]
+black = "#585B70"
+red = "#F38BA8"
+green = "#A6E3A1"
+yellow = "#F9E2AF"
+blue = "#89B4FA"
+magenta = "#F5C2E7"
+cyan = "#94E2D5"
+white = "#A6ADC8"
+EOF
+
+info "Конфиг picom"
+cat > "${CONFIG_DIR}/picom/picom.conf" <<'EOF'
+backend = "glx";
+vsync = true;
+
+shadow = true;
+shadow-radius = 18;
+shadow-opacity = 0.30;
+shadow-offset-x = -10;
+shadow-offset-y = -10;
+
+corner-radius = 12;
+round-borders = 10;
+
+fading = true;
+fade-in-step = 0.04;
+fade-out-step = 0.04;
+
+inactive-opacity = 0.95;
+active-opacity = 1.0;
+frame-opacity = 1.0;
+
+blur-method = "dual_kawase";
+blur-strength = 5;
+
+opacity-rule = [
+  "88:class_g = 'Alacritty'",
+  "92:class_g = 'Rofi'"
+];
+EOF
+
+info "Конфиг dunst"
+cat > "${CONFIG_DIR}/dunst/dunstrc" <<'EOF'
+[global]
+    monitor = 0
+    follow = mouse
+    width = 360
+    height = 100
+    origin = top-right
+    offset = 20x50
+    corner_radius = 12
+    frame_width = 2
+    gap_size = 8
+    font = JetBrainsMono Nerd Font 10
+    background = "#0F111A"
+    foreground = "#E6E9EF"
+    frame_color = "#89B4FA"
+    separator_color = frame
+    timeout = 5
+    markup = full
+    format = "<b>%s</b>\n%b"
+EOF
+
+info "Конфиг rofi"
 cat > "${CONFIG_DIR}/rofi/config.rasi" <<'EOF'
 configuration {
   modi: "drun,run,window";
   show-icons: true;
   icon-theme: "Papirus";
-  display-drun: "Apps";
-  display-run: "Run";
-  display-window: "Windows";
 }
 
 * {
@@ -347,150 +470,64 @@ element selected {
   background-color: @sel;
   text-color: @sel-fg;
 }
-
-element-icon {
-  size: 1.1em;
-}
 EOF
 
-info "Writing picom config"
-cat > "${CONFIG_DIR}/picom/picom.conf" <<'EOF'
-backend = "glx";
-vsync = true;
-
-shadow = true;
-shadow-radius = 18;
-shadow-opacity = 0.30;
-shadow-offset-x = -10;
-shadow-offset-y = -10;
-
-corner-radius = 12;
-round-borders = 10;
-
-fading = true;
-fade-in-step = 0.04;
-fade-out-step = 0.04;
-
-inactive-opacity = 0.95;
-active-opacity = 1.0;
-frame-opacity = 1.0;
-
-blur-method = "dual_kawase";
-blur-strength = 5;
-
-opacity-rule = [
-  "95:class_g = 'Alacritty'",
-  "92:class_g = 'Rofi'"
-];
-EOF
-
-info "Writing dunst config"
-cat > "${CONFIG_DIR}/dunst/dunstrc" <<'EOF'
-[global]
-    monitor = 0
-    follow = mouse
-    width = 360
-    height = 100
-    origin = top-right
-    offset = 20x50
-    corner_radius = 12
-    frame_width = 2
-    gap_size = 8
-    font = JetBrainsMono Nerd Font 10
-    background = "#0F111A"
-    foreground = "#E6E9EF"
-    frame_color = "#89B4FA"
-    separator_color = frame
-    timeout = 5
-    idle_threshold = 120
-    markup = full
-    format = "<b>%s</b>\n%b"
-
-[urgency_low]
-    timeout = 3
-
-[urgency_normal]
-    timeout = 5
-
-[urgency_critical]
-    background = "#1E1E2E"
-    foreground = "#F38BA8"
-    frame_color = "#F38BA8"
-    timeout = 0
-EOF
-
-info "Writing alacritty config"
-cat > "${CONFIG_DIR}/alacritty/alacritty.toml" <<'EOF'
-[window]
-opacity = 0.95
-padding = { x = 12, y = 12 }
-
-[font]
-normal = { family = "JetBrainsMono Nerd Font", style = "Regular" }
-bold = { family = "JetBrainsMono Nerd Font", style = "Bold" }
-italic = { family = "JetBrainsMono Nerd Font", style = "Italic" }
-size = 11.5
-
-[colors.primary]
-background = "#0F111A"
-foreground = "#E6E9EF"
-
-[colors.cursor]
-text = "#0F111A"
-cursor = "#89B4FA"
-
-[colors.normal]
-black = "#1A1D29"
-red = "#F38BA8"
-green = "#A6E3A1"
-yellow = "#F9E2AF"
-blue = "#89B4FA"
-magenta = "#F5C2E7"
-cyan = "#94E2D5"
-white = "#BAC2DE"
-
-[colors.bright]
-black = "#585B70"
-red = "#F38BA8"
-green = "#A6E3A1"
-yellow = "#F9E2AF"
-blue = "#89B4FA"
-magenta = "#F5C2E7"
-cyan = "#94E2D5"
-white = "#A6ADC8"
-EOF
-
-info "Writing .xprofile"
-cat > "${USER_HOME}/.xprofile" <<'EOF'
-export GTK_THEME=Adwaita:dark
-export XCURSOR_SIZE=24
-export QT_QPA_PLATFORMTHEME=qt5ct
-EOF
-
-info "Writing .xinitrc"
+info "Автозапуск X и автоперезапуск bspwm"
 cat > "${USER_HOME}/.xinitrc" <<'EOF'
-exec bspwm
+#!/bin/sh
+export XDG_CURRENT_DESKTOP=bspwm
+while true; do
+  dbus-run-session bspwm
+  sleep 1
+done
+EOF
+chmod +x "${USER_HOME}/.xinitrc"
+
+cat > "${USER_HOME}/.bash_profile" <<'EOF'
+# autostart X on tty1
+if [[ -z "${DISPLAY:-}" ]] && [[ "${XDG_VTNR:-0}" -eq 1 ]]; then
+  exec startx
+fi
 EOF
 
-info "Enabling NetworkManager"
-sudo systemctl enable NetworkManager >/dev/null 2>&1 || true
+info "Автологин на tty1"
+sudo mkdir -p /etc/systemd/system/getty@tty1.service.d
+cat <<EOF | sudo tee /etc/systemd/system/getty@tty1.service.d/autologin.conf >/dev/null
+[Service]
+ExecStart=
+ExecStart=-/sbin/agetty --autologin ${USER_NAME} --noclear %I \$TERM
+EOF
 
-info "Done"
+info "fastfetch в bashrc"
+if ! grep -q "fastfetch" "${USER_HOME}/.bashrc" 2>/dev/null; then
+  cat >> "${USER_HOME}/.bashrc" <<'EOF'
 
+# system info
+if command -v fastfetch >/dev/null 2>&1; then
+  fastfetch
+fi
+EOF
+fi
+
+info "Права владельца"
+sudo chown -R "${USER_NAME}:${USER_NAME}" "${CONFIG_DIR}" "${USER_HOME}/.local" "${WALL_DIR}" "${USER_HOME}/.xinitrc" "${USER_HOME}/.bash_profile" "${USER_HOME}/.bashrc"
+
+info "Готово"
 echo
-echo "Next steps:"
-echo "1. Put wallpaper here:"
+echo "Что осталось:"
+echo "1. Положи свои обои сюда:"
 echo "   ${WALLPAPER}"
 echo
-echo "2. Start X session:"
-echo "   startx"
+echo "2. Перезагрузи систему:"
+echo "   sudo reboot"
 echo
-echo "3. Main hotkeys:"
-echo "   Alt+Return   -> terminal"
-echo "   Alt+d        -> rofi"
-echo "   Alt+b        -> firefox"
-echo "   Alt+e        -> thunar"
-echo "   Alt+q        -> close window"
-echo "   Alt+Escape   -> quit bspwm"
+echo "3. Основные хоткеи:"
+echo "   Alt+Return      -> терминал"
+echo "   Alt+d           -> меню приложений"
+echo "   Alt+b           -> Firefox"
+echo "   Alt+e           -> Thunar"
+echo "   Alt+q           -> закрыть окно"
+echo "   Alt+Shift+l     -> блокировка экрана"
 echo
-echo "If Super works, the same hotkeys also work with Super."
+echo "Обычный выход из bspwm хоткеями отключён."
+echo "Аварийный доступ оставлен через Ctrl+Alt+F2."
