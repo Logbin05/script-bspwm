@@ -57,9 +57,9 @@ done || true)"
 BATTERY_NAME="${BATTERY_NAME:-BAT0}"
 AC_NAME="${AC_NAME:-AC}"
 
-POLYBAR_RIGHT_MODULES="updates cpu memory pulseaudio network bluetooth date control power"
+POLYBAR_RIGHT_MODULES="current-desktop updates cpu memory pulseaudio network bluetooth date control power"
 if [[ -d "/sys/class/power_supply/${BATTERY_NAME}" ]]; then
-  POLYBAR_RIGHT_MODULES="updates cpu memory pulseaudio network bluetooth battery date control power"
+  POLYBAR_RIGHT_MODULES="current-desktop updates cpu memory pulseaudio network bluetooth battery date control power"
 fi
 
 PACKAGES=(
@@ -84,6 +84,7 @@ PACKAGES=(
   networkmanager
   noto-fonts
   noto-fonts-emoji
+  openssh
   pacman-contrib
   papirus-icon-theme
   pavucontrol
@@ -114,6 +115,7 @@ BACKUP_TARGETS=(
   "${CONFIG_DIR}/polybar/config.ini"
   "${CONFIG_DIR}/polybar/scripts/network-status"
   "${CONFIG_DIR}/polybar/scripts/bluetooth-status"
+  "${CONFIG_DIR}/polybar/scripts/current-desktop-status"
   "${CONFIG_DIR}/polybar/scripts/updates-status"
   "${CONFIG_DIR}/rofi/config.rasi"
   "${CONFIG_DIR}/rofi/launcher.rasi"
@@ -125,9 +127,11 @@ BACKUP_TARGETS=(
   "${LOCAL_BIN}/lock-screen"
   "${LOCAL_BIN}/open-app-launcher"
   "${LOCAL_BIN}/power-menu"
+  "${LOCAL_BIN}/bind-ssh-key"
   "${LOCAL_BIN}/set-user-avatar"
   "${LOCAL_BIN}/system-settings"
   "${LOCAL_BIN}/update-system"
+  "${USER_HOME}/.ssh/config"
   "${USER_HOME}/.bash_profile"
   "${USER_HOME}/.bashrc"
   "${USER_HOME}/.xinitrc"
@@ -136,6 +140,7 @@ BACKUP_TARGETS=(
 
 create_directories() {
   mkdir -p \
+    "${CONFIG_DIR}/systemd/user/sockets.target.wants" \
     "${CONFIG_DIR}/alacritty" \
     "${CONFIG_DIR}/bspwm" \
     "${CONFIG_DIR}/dunst" \
@@ -146,6 +151,7 @@ create_directories() {
     "${CONFIG_DIR}/rofi" \
     "${CONFIG_DIR}/sxhkd" \
     "${LOCAL_BIN}" \
+    "${USER_HOME}/.ssh" \
     "${WALL_DIR}"
 }
 
@@ -195,37 +201,7 @@ write_dropdown_terminal() {
 #!/usr/bin/env bash
 set -euo pipefail
 
-position_dropdown() {
-  local wid="$1"
-  local screen sw sh ww wh wx wy
-
-  screen="$(xrandr | awk '/\*/ {print $1; exit}')"
-  sw="${screen%x*}"
-  sh="${screen#*x}"
-
-  ww=$(( sw * 76 / 100 ))
-  wh=$(( sh * 68 / 100 ))
-  wx=$(( (sw - ww) / 2 ))
-  wy=42
-
-  xdotool windowsize "${wid}" "${ww}" "${wh}"
-  xdotool windowmove "${wid}" "${wx}" "${wy}"
-}
-
-existing_id="$(xdotool search --class dropdown 2>/dev/null | tail -n 1 || true)"
-
-if [[ -n "${existing_id}" ]]; then
-  xdotool windowmap "${existing_id}" >/dev/null 2>&1 || true
-  position_dropdown "${existing_id}"
-  xdotool windowactivate "${existing_id}" >/dev/null 2>&1 || true
-  exit 0
-fi
-
-alacritty --class dropdown &
-sleep 0.35
-
-wid="$(xdotool search --sync --onlyvisible --class dropdown | tail -n 1)"
-position_dropdown "${wid}"
+exec alacritty
 EOF
 
   chmod +x "${LOCAL_BIN}/dropdown-terminal"
@@ -356,6 +332,104 @@ EOF
   chmod +x "${LOCAL_BIN}/set-user-avatar"
 }
 
+write_ssh_key_script() {
+  cat > "${LOCAL_BIN}/bind-ssh-key" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+runtime_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+export SSH_AUTH_SOCK="${SSH_AUTH_SOCK:-${runtime_dir}/ssh-agent.socket}"
+
+CONFIG_FILE="${HOME}/.ssh/config"
+MARK_BEGIN="# >>> IMBA SSH BEGIN >>>"
+MARK_END="# <<< IMBA SSH END <<<"
+
+pick_key() {
+  yad \
+    --file \
+    --title="Выбери SSH ключ" \
+    --file-filter="SSH private keys | *" || true
+}
+
+detect_default_key() {
+  local key
+
+  for key in \
+    "${HOME}/.ssh/id_ed25519" \
+    "${HOME}/.ssh/id_rsa" \
+    "${HOME}/.ssh/id_ecdsa" \
+    "${HOME}/.ssh/id_ed25519_sk" \
+    "${HOME}/.ssh/id_ecdsa_sk"; do
+    [[ -f "${key}" ]] && printf '%s\n' "${key}" && return 0
+  done
+
+  return 1
+}
+
+key_path="${1:-}"
+
+if [[ "${key_path}" == "--auto" ]]; then
+  key_path="$(detect_default_key || true)"
+elif [[ -z "${key_path}" || "${key_path}" == "--pick" ]]; then
+  key_path="$(pick_key)"
+fi
+
+if [[ -n "${key_path}" && ! -f "${key_path}" ]]; then
+  printf 'SSH ключ не найден: %s\n' "${key_path}" >&2
+  exit 1
+fi
+
+mkdir -p "${HOME}/.ssh" "${HOME}/.config/systemd/user/sockets.target.wants"
+chmod 700 "${HOME}/.ssh"
+
+touch "${CONFIG_FILE}"
+chmod 600 "${CONFIG_FILE}"
+
+tmp_file="$(mktemp)"
+trap 'rm -f "${tmp_file}"' EXIT
+
+awk -v begin="${MARK_BEGIN}" -v end="${MARK_END}" '
+  $0 == begin { skip=1; next }
+  $0 == end { skip=0; next }
+  !skip { print }
+' "${CONFIG_FILE}" > "${tmp_file}"
+
+{
+  cat "${tmp_file}"
+  [[ -s "${tmp_file}" ]] && printf '\n'
+  printf '%s\n' "${MARK_BEGIN}"
+  printf '%s\n' "Host *"
+  printf '%s\n' "  AddKeysToAgent yes"
+  if [[ -n "${key_path}" ]]; then
+    printf '  IdentityFile %s\n' "${key_path}"
+  fi
+  printf '%s\n' "${MARK_END}"
+} > "${CONFIG_FILE}"
+
+chmod 600 "${CONFIG_FILE}"
+
+ln -sf /usr/lib/systemd/user/ssh-agent.socket \
+  "${HOME}/.config/systemd/user/sockets.target.wants/ssh-agent.socket"
+
+systemctl --user daemon-reload >/dev/null 2>&1 || true
+systemctl --user enable --now ssh-agent.socket >/dev/null 2>&1 || true
+
+if [[ -n "${key_path}" ]] && [[ -t 0 ]] && [[ -t 1 ]]; then
+  ssh-add "${key_path}" </dev/tty || true
+fi
+
+if command -v notify-send >/dev/null 2>&1 && [[ -n "${DISPLAY:-}" ]]; then
+  if [[ -n "${key_path}" ]]; then
+    notify-send "SSH ключ привязан" "Ключ ${key_path##*/} будет подхватываться через ssh-agent."
+  else
+    notify-send "SSH agent настроен" "Осталось выбрать ключ через ~/.local/bin/bind-ssh-key --pick."
+  fi
+fi
+EOF
+
+  chmod +x "${LOCAL_BIN}/bind-ssh-key"
+}
+
 write_app_settings_script() {
   cat > "${LOCAL_BIN}/app-settings" <<'EOF'
 #!/usr/bin/env bash
@@ -436,6 +510,7 @@ open_target() {
     display) exec arandr ;;
     appearance) exec lxappearance ;;
     avatar) exec "$HOME/.local/bin/set-user-avatar" --pick ;;
+    ssh) exec "$HOME/.local/bin/bind-ssh-key" --pick ;;
     updates) exec "$HOME/.local/bin/update-system" ;;
     power) exec "$HOME/.local/bin/power-menu" ;;
     *) exit 0 ;;
@@ -464,6 +539,7 @@ choice="$(
     "Мониторы" "Положение экранов и разрешение" \
     "Внешний вид" "GTK-тема, иконки, курсор и шрифты" \
     "Аватар" "Фото пользователя для greeter и lock screen" \
+    "SSH ключ" "Привязка SSH ключа к учётке и авто-agent" \
     "Обновления" "Полное обновление Arch-системы" \
     "Питание" "Lock, suspend, reboot и shutdown" \
     --button="Открыть:0" \
@@ -479,6 +555,7 @@ case "${selection}" in
   Мониторы) open_target display ;;
   "Внешний вид") open_target appearance ;;
   Аватар) open_target avatar ;;
+  "SSH ключ") open_target ssh ;;
   Обновления) open_target updates ;;
   Питание) open_target power ;;
 esac
@@ -577,6 +654,20 @@ fi
 printf '󰂯 ready\n'
 EOF
 
+  cat > "${CONFIG_DIR}/polybar/scripts/current-desktop-status" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+current_desktop="$(bspc query -D -d focused --names 2>/dev/null || true)"
+
+if [[ -z "${current_desktop}" ]]; then
+  printf 'desk ?\n'
+  exit 0
+fi
+
+printf 'desk %s\n' "${current_desktop}"
+EOF
+
   cat > "${CONFIG_DIR}/polybar/scripts/updates-status" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -599,6 +690,7 @@ EOF
   chmod +x \
     "${CONFIG_DIR}/polybar/scripts/network-status" \
     "${CONFIG_DIR}/polybar/scripts/bluetooth-status" \
+    "${CONFIG_DIR}/polybar/scripts/current-desktop-status" \
     "${CONFIG_DIR}/polybar/scripts/updates-status"
 }
 
@@ -622,11 +714,7 @@ if [ -f "$HOME/Pictures/Wallpapers/wallpaper.jpg" ]; then
   feh --bg-fill "$HOME/Pictures/Wallpapers/wallpaper.jpg"
 fi
 
-bspc monitor -d I II III IV V VI VII VIII IX X
-
-for desktop in I II III IV V VI VII VIII IX X; do
-  bspc desktop "${desktop}" -l monocle
-done
+bspc monitor -d 1 2 3 4 5 6 7 8 9 10
 
 bspc config border_width 0
 bspc config window_gap 0
@@ -640,7 +728,6 @@ bspc config active_border_color "#F6C177"
 bspc config normal_border_color "#2B343F"
 bspc config presel_feedback_color "#F28FAD"
 
-bspc rule -a dropdown state=floating sticky=on center=on layer=above
 bspc rule -a settings-editor state=floating center=on
 bspc rule -a AppDeckSettings state=floating center=on
 bspc rule -a SystemDeckSettings state=floating center=on
@@ -656,14 +743,14 @@ EOF
 
 write_sxhkd_config() {
   cat > "${CONFIG_DIR}/sxhkd/sxhkdrc" <<'EOF'
-# dropdown terminal
+# terminal
 super + Return
     ~/.local/bin/dropdown-terminal
 
 alt + Return
     ~/.local/bin/dropdown-terminal
 
-# normal terminal
+# extra terminal
 super + shift + Return
     alacritty
 
@@ -870,26 +957,48 @@ type = internal/bspwm
 pin-workspaces = true
 enable-click = true
 enable-scroll = false
+ws-icon-0 = 1;1
+ws-icon-1 = 2;2
+ws-icon-2 = 3;3
+ws-icon-3 = 4;4
+ws-icon-4 = 5;5
+ws-icon-5 = 6;6
+ws-icon-6 = 7;7
+ws-icon-7 = 8;8
+ws-icon-8 = 9;9
+ws-icon-9 = 10;10
+format = <label-state>
+format-background = \${colors.surface}
+format-foreground = \${colors.foreground}
+format-padding = 1
 label-focused = %name%
-label-focused-background = \${colors.primary}
-label-focused-foreground = #101418
-label-focused-padding = 2
-label-focused-margin = 1
+label-focused-background = transparent
+label-focused-foreground = \${colors.primary}
+label-focused-padding = 1
+label-focused-margin = 0
 label-occupied = %name%
-label-occupied-background = \${colors.surface}
+label-occupied-background = transparent
 label-occupied-foreground = \${colors.foreground}
-label-occupied-padding = 2
-label-occupied-margin = 1
+label-occupied-padding = 1
+label-occupied-margin = 0
 label-empty = %name%
-label-empty-background = \${colors.surface}
+label-empty-background = transparent
 label-empty-foreground = \${colors.muted}
-label-empty-padding = 2
-label-empty-margin = 1
+label-empty-padding = 1
+label-empty-margin = 0
 label-urgent = %name%
-label-urgent-background = \${colors.alert}
-label-urgent-foreground = #101418
-label-urgent-padding = 2
-label-urgent-margin = 1
+label-urgent-background = transparent
+label-urgent-foreground = \${colors.alert}
+label-urgent-padding = 1
+label-urgent-margin = 0
+
+[module/current-desktop]
+type = custom/script
+exec = ~/.config/polybar/scripts/current-desktop-status
+interval = 1
+format-background = \${colors.surface-alt}
+format-foreground = \${colors.primary}
+format-padding = 2
 
 [module/xwindow]
 type = internal/xwindow
@@ -1387,6 +1496,7 @@ write_x_profile() {
 export GTK_THEME=Adwaita:dark
 export XCURSOR_SIZE=24
 export BROWSER=firefox
+export SSH_AUTH_SOCK="${XDG_RUNTIME_DIR}/ssh-agent.socket"
 EOF
 }
 
@@ -1405,6 +1515,7 @@ EOF
   chmod +x "${USER_HOME}/.xinitrc"
 
   cat > "${USER_HOME}/.bash_profile" <<'EOF'
+export SSH_AUTH_SOCK="${XDG_RUNTIME_DIR}/ssh-agent.socket"
 [[ -f "${HOME}/.bashrc" ]] && . "${HOME}/.bashrc"
 EOF
 }
@@ -1448,6 +1559,35 @@ EOF
   done_msg "LightDM и новый lock screen настроены."
 }
 
+configure_ssh_agent() {
+  info "Настройка SSH-агента и привязки ключа к учётке"
+
+  local runtime_dir
+
+  runtime_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u "${USER_NAME}")}"
+  export SSH_AUTH_SOCK="${runtime_dir}/ssh-agent.socket"
+  chmod 700 "${USER_HOME}/.ssh"
+  ln -sf /usr/lib/systemd/user/ssh-agent.socket \
+    "${CONFIG_DIR}/systemd/user/sockets.target.wants/ssh-agent.socket"
+
+  systemctl --user daemon-reload >/dev/null 2>&1 || true
+  systemctl --user enable --now ssh-agent.socket >/dev/null 2>&1 || true
+
+  if [[ -f "${USER_HOME}/.ssh/id_ed25519" ]]; then
+    "${LOCAL_BIN}/bind-ssh-key" "${USER_HOME}/.ssh/id_ed25519"
+    done_msg "SSH ключ id_ed25519 привязан к учётке."
+  elif [[ -f "${USER_HOME}/.ssh/id_rsa" ]]; then
+    "${LOCAL_BIN}/bind-ssh-key" "${USER_HOME}/.ssh/id_rsa"
+    done_msg "SSH ключ id_rsa привязан к учётке."
+  elif [[ -f "${USER_HOME}/.ssh/id_ecdsa" ]]; then
+    "${LOCAL_BIN}/bind-ssh-key" "${USER_HOME}/.ssh/id_ecdsa"
+    done_msg "SSH ключ id_ecdsa привязан к учётке."
+  else
+    "${LOCAL_BIN}/bind-ssh-key" --auto
+    warn "SSH ключ автоматически не найден. Потом можно выбрать свой через ~/.local/bin/bind-ssh-key --pick."
+  fi
+}
+
 append_fastfetch() {
   if grep -q "fastfetch" "${USER_HOME}/.bashrc" 2>/dev/null; then
     warn "fastfetch уже прописан в .bashrc, пропускаю."
@@ -1472,8 +1612,10 @@ fix_permissions() {
     "${CONFIG_DIR}/picom" \
     "${CONFIG_DIR}/polybar" \
     "${CONFIG_DIR}/rofi" \
+    "${CONFIG_DIR}/systemd" \
     "${CONFIG_DIR}/sxhkd" \
     "${LOCAL_BIN}" \
+    "${USER_HOME}/.ssh" \
     "${WALL_DIR}" \
     "${USER_HOME}/.bash_profile" \
     "${USER_HOME}/.bashrc" \
@@ -1492,12 +1634,15 @@ print_next_steps() {
   echo "2. Если хочешь свою аватарку на блокировке:"
   echo "   ~/.local/bin/set-user-avatar --pick"
   echo
-  echo "3. Перезагрузи систему:"
+  echo "3. Если хочешь привязать свой SSH ключ вручную:"
+  echo "   ~/.local/bin/bind-ssh-key --pick"
+  echo
+  echo "4. Перезагрузи систему:"
   echo "   sudo reboot"
   echo
-  echo "4. Главные хоткеи:"
-  echo "   Alt+Return         -> dropdown-терминал"
-  echo "   Alt+Shift+Return   -> обычный терминал"
+  echo "5. Главные хоткеи:"
+  echo "   Alt+Return         -> терминал в тайлинге"
+  echo "   Alt+Shift+Return   -> ещё один терминал"
   echo "   Alt+d              -> App Deck / выбор приложений"
   echo "   Alt+c              -> quick hub"
   echo "   Alt+s              -> системные настройки"
@@ -1511,6 +1656,7 @@ print_next_steps() {
   echo
   echo "Верхняя панель теперь показывает обновления, CPU, RAM, звук, сеть, Bluetooth, батарею и время."
   echo "Сессия теперь поднимается через LightDM: есть greeter, поля логина/пароля и аватар пользователя."
+  echo "Столы в баре ужаты до цифр, а активный рабочий стол вынесен отдельным индикатором справа."
 }
 
 main() {
@@ -1533,6 +1679,7 @@ main() {
   write_control_center_script
   write_power_menu_script
   write_avatar_script
+  write_ssh_key_script
   write_app_settings_script
   write_system_settings_script
   write_polybar_scripts
@@ -1549,6 +1696,7 @@ main() {
   done_msg "Новая тема и окружение записаны."
 
   configure_display_manager
+  configure_ssh_agent
 
   info "Проверка аватара пользователя"
   if [[ -f "${USER_HOME}/Pictures/avatar.png" ]]; then
