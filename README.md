@@ -4,13 +4,15 @@
 
 - минималистичный и акцентный `polybar`: рабочие столы, активное окно, звук, Wi-Fi, Bluetooth, дата, обновления, трей и power
 - компактные столы `1..n` в баре и отдельный индикатор текущего рабочего стола сбоку
-- контекстное меню по правому клику на ключевых модулях bar
+- стабильное контекстное меню bar (right-click + fallback через `yad`, если `rofi` не открылся)
 - отдельный `~/.config/polybar/user.ini` для кастомизации bar без правки core-конфига
 - быстрые пресеты бара через `~/.local/bin/polybar-preset` (`focus`, `balanced`, `monitoring`)
 - `App Deck` для выбора приложений через красивую сетку `rofi`
 - `quick hub`, отдельные окна настроек приложений и системных настроек
 - полностью кастомный `lock screen` на `i3lock-color`: blur фон, время/дата, акцентные состояния, аватар и fallback на greeter
 - `ssh-agent`, привязанный к учётке, плюс helper для привязки SSH ключа без ручного запуска агента
+- helper для установки своих обоев: `~/.local/bin/set-wallpaper --pick`
+- поддержка 2+ мониторов: авто-раскладка рабочих столов и запуск bar на каждом мониторе
 - команда `~/.local/bin/arch-access` для доступа к приватным файлам и директориям через `sudoedit`/root-shell
 - мягкие fade/blur/shadow-эффекты через `picom`
 - прозрачный `Alacritty`, тёмные уведомления `dunst`, минималистичные иконки и единая палитра
@@ -31,17 +33,20 @@ sudo reboot
 - сверху появится информативный хедбар
 - `Alt+d` откроет `App Deck`
 - `Alt+c` откроет `quick hub`
+- `Alt+Ctrl+c` откроет контекстное меню bar
 - `Alt+s` откроет системные настройки
 - `Alt+,` откроет настройки приложений
 - `Alt+Shift+p` откроет power menu
 - `Alt+Shift+l` откроет новый кастомный lock screen
 - `Alt+Ctrl+a` откроет `arch-access` для приватных файлов
 - `Alt+Ctrl+u` проверит обновления самого setup-скрипта
+- `Alt+Ctrl+w` откроет выбор своих обоев
+- `Alt+Ctrl+m` переприменит layout мониторов и перезапустит bar
 - при открытии интерактивного терминала будет показываться `fastfetch`
 - `ssh-agent` будет подниматься как user-service для текущей учётки
 - bar можно тюнить через `~/.config/polybar/user.ini`, затем применить `Alt+Shift+b`
 - bar включается по умолчанию (автостарт в `bspwm`) и поднимается сразу после установки, если ты уже в GUI
-- правый клик на модулях launcher/current-desktop/window/updates/date открывает контекстное меню bar
+- правый клик на модулях launcher/current-desktop/window/volume/network/bluetooth/date/power открывает контекстное меню bar
 
 Все основные бинды продублированы и на `Super`.
 
@@ -58,8 +63,11 @@ sudo reboot
 - `Alt+e` или `Super+e` -> Thunar
 - `Alt+q` или `Super+q` -> закрыть окно
 - `Alt+Ctrl+b` или `Super+Ctrl+b` -> перезапуск `polybar`
+- `Alt+Ctrl+c` или `Super+Ctrl+c` -> контекстное меню bar
 - `Alt+Ctrl+a` или `Super+Ctrl+a` -> `arch-access` (приватные файлы)
 - `Alt+Ctrl+u` или `Super+Ctrl+u` -> обновление setup-скрипта
+- `Alt+Ctrl+w` или `Super+Ctrl+w` -> установить свои обои
+- `Alt+Ctrl+m` или `Super+Ctrl+m` -> обновить layout мониторов + перезапустить bar
 - `Alt+Shift+u` или `Super+Shift+u` -> обновление системы
 
 `Polybar` теперь доступен и в системных настройках, и в настройках приложений.
@@ -155,8 +163,21 @@ sudo reboot
 
 ## Обои
 
-Положи свои обои сюда:
+Быстрый способ поставить свои обои:
 
-```text
-~/Pictures/Wallpapers/wallpaper.jpg
+```bash
+~/.local/bin/set-wallpaper --pick
+```
+
+Обои сохраняются как `~/Pictures/Wallpapers/wallpaper.jpg` и применяются автоматически при старте сессии.
+
+## Мониторы 2+
+
+Для 2+ мониторов раскладка рабочих столов применяется автоматически (`1..n`) и bar запускается на каждом дисплее.
+
+Если подключил/отключил монитор на горячую, быстро перепримени:
+
+```bash
+~/.local/bin/apply-monitor-layout
+~/.local/bin/launch-polybar
 ```

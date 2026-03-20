@@ -49,6 +49,7 @@ readonly WALLPAPER="${WALL_DIR}/wallpaper.jpg"
 readonly IMBA_STATE_DIR="${CONFIG_DIR}/imba-bspwm"
 readonly SCRIPT_SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly SCRIPT_SOURCE_FILE="${IMBA_STATE_DIR}/source-dir"
+readonly WALLPAPER_SOURCE_FILE="${IMBA_STATE_DIR}/wallpaper-path"
 
 BATTERY_NAME="$(for d in /sys/class/power_supply/*; do
   [[ -f "${d}/type" ]] && grep -qx 'Battery' "${d}/type" && basename "${d}" && break
@@ -132,6 +133,9 @@ BACKUP_TARGETS=(
   "${CONFIG_DIR}/rofi/menu.rasi"
   "${CONFIG_DIR}/sxhkd/sxhkdrc"
   "${SCRIPT_SOURCE_FILE}"
+  "${WALLPAPER_SOURCE_FILE}"
+  "${LOCAL_BIN}/apply-monitor-layout"
+  "${LOCAL_BIN}/apply-wallpaper"
   "${LOCAL_BIN}/app-settings"
   "${LOCAL_BIN}/arch-access"
   "${LOCAL_BIN}/bar-context-menu"
@@ -143,6 +147,7 @@ BACKUP_TARGETS=(
   "${LOCAL_BIN}/power-menu"
   "${LOCAL_BIN}/polybar-preset"
   "${LOCAL_BIN}/bind-ssh-key"
+  "${LOCAL_BIN}/set-wallpaper"
   "${LOCAL_BIN}/set-user-avatar"
   "${LOCAL_BIN}/system-settings"
   "${LOCAL_BIN}/update-imba-script"
@@ -360,10 +365,21 @@ notify_msg() {
   fi
 }
 
-start_bar() {
+list_monitors() {
+  if command -v polybar >/dev/null 2>&1; then
+    polybar --list-monitors 2>/dev/null | cut -d: -f1 || true
+    return
+  fi
+  return 0
+}
+
+start_bar_group() {
   local cfg="$1"
   local tag="$2"
+  local monitors=""
+  local monitor=""
   local pid=""
+  local started=0
 
   if [[ ! -f "${cfg}" ]]; then
     printf '[%s] %s config not found: %s\n' "$(date +'%F %T')" "${tag}" "${cfg}" >> "${log_file}"
@@ -371,16 +387,39 @@ start_bar() {
   fi
 
   printf '[%s] trying %s config: %s\n' "$(date +'%F %T')" "${tag}" "${cfg}" >> "${log_file}"
-  polybar -q main -c "${cfg}" >> "${log_file}" 2>&1 &
-  pid=$!
-  sleep 1
 
-  if kill -0 "${pid}" >/dev/null 2>&1; then
-    printf '[%s] polybar started (%s), pid=%s\n' "$(date +'%F %T')" "${tag}" "${pid}" >> "${log_file}"
+  monitors="$(list_monitors)"
+  if [[ -z "${monitors}" ]]; then
+    monitors="_single_"
+  fi
+
+  while IFS= read -r monitor; do
+    [[ -n "${monitor}" ]] || continue
+
+    if [[ "${monitor}" == "_single_" ]]; then
+      polybar -q main -c "${cfg}" >> "${log_file}" 2>&1 &
+    else
+      MONITOR="${monitor}" polybar -q main -c "${cfg}" >> "${log_file}" 2>&1 &
+    fi
+
+    pid=$!
+    sleep 0.4
+
+    if kill -0 "${pid}" >/dev/null 2>&1; then
+      started=$((started + 1))
+      printf '[%s] polybar started (%s), pid=%s, monitor=%s\n' \
+        "$(date +'%F %T')" "${tag}" "${pid}" "${monitor}" >> "${log_file}"
+    else
+      printf '[%s] polybar failed (%s), monitor=%s\n' \
+        "$(date +'%F %T')" "${tag}" "${monitor}" >> "${log_file}"
+    fi
+  done <<< "${monitors}"
+
+  if (( started > 0 )); then
     return 0
   fi
 
-  printf '[%s] polybar failed to start (%s)\n' "$(date +'%F %T')" "${tag}" >> "${log_file}"
+  printf '[%s] no polybar instances started (%s)\n' "$(date +'%F %T')" "${tag}" >> "${log_file}"
   return 1
 }
 
@@ -398,11 +437,11 @@ fi
 printf '\n[%s] launch request\n' "$(date +'%F %T')" >> "${log_file}"
 pkill -x polybar >/dev/null 2>&1 || true
 
-if start_bar "${config_file}" "main"; then
+if start_bar_group "${config_file}" "main"; then
   exit 0
 fi
 
-if start_bar "${fallback_file}" "fallback"; then
+if start_bar_group "${fallback_file}" "fallback"; then
   notify_msg "Polybar fallback" "Основной конфиг не стартовал, запущен fallback."
   exit 0
 fi
@@ -564,6 +603,131 @@ write_script_source_marker() {
   printf '%s\n' "${SCRIPT_SOURCE_DIR}" > "${SCRIPT_SOURCE_FILE}"
 }
 
+write_wallpaper_scripts() {
+  cat > "${LOCAL_BIN}/apply-wallpaper" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+state_file="${XDG_CONFIG_HOME:-$HOME/.config}/imba-bspwm/wallpaper-path"
+default_wall="${HOME}/Pictures/Wallpapers/wallpaper.jpg"
+source_path=""
+
+if [[ -f "${state_file}" ]]; then
+  source_path="$(head -n 1 "${state_file}")"
+fi
+
+if [[ -z "${source_path}" || ! -f "${source_path}" ]]; then
+  source_path="${default_wall}"
+fi
+
+if [[ ! -f "${source_path}" ]]; then
+  printf '[WARN] Wallpaper not found: %s\n' "${source_path}" >&2
+  exit 1
+fi
+
+if command -v feh >/dev/null 2>&1; then
+  feh --bg-fill "${source_path}"
+fi
+EOF
+
+  chmod +x "${LOCAL_BIN}/apply-wallpaper"
+
+  cat > "${LOCAL_BIN}/set-wallpaper" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+state_dir="${XDG_CONFIG_HOME:-$HOME/.config}/imba-bspwm"
+state_file="${state_dir}/wallpaper-path"
+target_dir="${HOME}/Pictures/Wallpapers"
+target_file="${target_dir}/wallpaper.jpg"
+source_path="${1:-}"
+
+pick_wallpaper() {
+  if command -v yad >/dev/null 2>&1; then
+    yad \
+      --file \
+      --title="Выбери обои" \
+      --file-filter="Images | *.png *.jpg *.jpeg *.webp *.bmp" || true
+    return
+  fi
+
+  printf 'Введи путь до обоев: ' >&2
+  read -r source_path || true
+  printf '%s' "${source_path}"
+}
+
+if [[ -z "${source_path}" || "${source_path}" == "--pick" ]]; then
+  source_path="$(pick_wallpaper)"
+fi
+
+[[ -n "${source_path}" ]] || exit 0
+
+source_path="${source_path/#\~/$HOME}"
+source_path="$(realpath -m "${source_path}")"
+[[ -f "${source_path}" ]] || {
+  printf '[ERROR] Файл не найден: %s\n' "${source_path}" >&2
+  exit 1
+}
+
+mkdir -p "${target_dir}" "${state_dir}"
+cp -f "${source_path}" "${target_file}"
+printf '%s\n' "${target_file}" > "${state_file}"
+
+"${HOME}/.local/bin/apply-wallpaper" || true
+
+if command -v notify-send >/dev/null 2>&1 && [[ -n "${DISPLAY:-}" ]]; then
+  notify-send "Обои применены" "${source_path##*/}"
+fi
+EOF
+
+  chmod +x "${LOCAL_BIN}/set-wallpaper"
+}
+
+write_monitor_layout_script() {
+  cat > "${LOCAL_BIN}/apply-monitor-layout" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+mapfile -t monitors < <(bspc query -M --names 2>/dev/null || true)
+
+if (( ${#monitors[@]} == 0 )); then
+  exit 0
+fi
+
+primary_slots="${IMBA_PRIMARY_MONITOR_DESKTOPS:-10}"
+extra_slots="${IMBA_EXTRA_MONITOR_DESKTOPS:-5}"
+
+if [[ ! "${primary_slots}" =~ ^[1-9][0-9]*$ ]]; then
+  primary_slots=10
+fi
+
+if [[ ! "${extra_slots}" =~ ^[1-9][0-9]*$ ]]; then
+  extra_slots=5
+fi
+
+desktop_counter=1
+
+for i in "${!monitors[@]}"; do
+  monitor="${monitors[$i]}"
+  desktops=()
+  slots="${extra_slots}"
+
+  if (( i == 0 )); then
+    slots="${primary_slots}"
+  fi
+
+  for ((j = 0; j < slots; j++)); do
+    desktops+=("${desktop_counter}")
+    ((desktop_counter++))
+  done
+
+  bspc monitor "${monitor}" -d "${desktops[@]}"
+done
+EOF
+
+  chmod +x "${LOCAL_BIN}/apply-monitor-layout"
+}
+
 write_launcher_script() {
   cat > "${LOCAL_BIN}/open-app-launcher" <<'EOF'
 #!/usr/bin/env bash
@@ -669,20 +833,45 @@ write_bar_context_menu_script() {
 #!/usr/bin/env bash
 set -euo pipefail
 
-choice="$(
+choices="$(
   printf '%s\n' \
     '󰀻  Запуск приложений' \
     '󰛳  Настройки приложений' \
     '󰒓  Системные настройки' \
     '󰖟  Polybar preset' \
     '󰇚  Polybar custom' \
+    '󰉏  Сменить обои' \
     '󱎓  Приватные файлы (arch-access)' \
     '󰚰  Обновить setup' \
     '󰈆  Перезапустить bar' \
     '󰏗  Обновить систему' \
-    '󰐥  Меню питания' |
-    rofi -dmenu -i -p "context" -theme "$HOME/.config/rofi/menu.rasi" || true
+    '󰐥  Меню питания'
 )"
+
+choice=""
+if command -v rofi >/dev/null 2>&1; then
+  choice="$(
+    printf '%s\n' "${choices}" |
+      rofi -dmenu -i -p "context" -theme "$HOME/.config/rofi/menu.rasi" || true
+  )"
+fi
+
+if [[ -z "${choice}" ]] && command -v yad >/dev/null 2>&1; then
+  choice="$(
+    printf '%s\n' "${choices}" |
+      yad --list \
+        --title="Контекстное меню" \
+        --class=BarContextMenu \
+        --width=500 \
+        --height=420 \
+        --center \
+        --column="Действие" \
+        --separator="|" \
+        --button="Открыть:0" \
+        --button="Закрыть:1" 2>/dev/null || true
+  )"
+  choice="${choice%%|*}"
+fi
 
 case "${choice}" in
   "󰀻  Запуск приложений") exec "$HOME/.local/bin/open-app-launcher" ;;
@@ -690,6 +879,7 @@ case "${choice}" in
   "󰒓  Системные настройки") exec "$HOME/.local/bin/system-settings" ;;
   "󰖟  Polybar preset") exec "$HOME/.local/bin/polybar-preset" ;;
   "󰇚  Polybar custom") exec "$HOME/.local/bin/app-settings" panel-custom ;;
+  "󰉏  Сменить обои") exec "$HOME/.local/bin/set-wallpaper" --pick ;;
   "󱎓  Приватные файлы (arch-access)") exec "$HOME/.local/bin/arch-access" ;;
   "󰚰  Обновить setup") exec "$HOME/.local/bin/update-imba-script" ;;
   "󰈆  Перезапустить bar") exec "$HOME/.local/bin/launch-polybar" ;;
@@ -711,6 +901,7 @@ choice="$(
     '󰀻  Запуск приложений' \
     '󰛳  Настройки приложений' \
     '󰒓  Системные настройки' \
+    '󰉏  Сменить обои' \
     '󱎓  Приватные файлы' \
     '󰚰  Обновить setup' \
     '󰏗  Обновить систему' \
@@ -722,6 +913,7 @@ case "${choice}" in
   "󰀻  Запуск приложений") exec "$HOME/.local/bin/open-app-launcher" ;;
   "󰛳  Настройки приложений") exec "$HOME/.local/bin/app-settings" ;;
   "󰒓  Системные настройки") exec "$HOME/.local/bin/system-settings" ;;
+  "󰉏  Сменить обои") exec "$HOME/.local/bin/set-wallpaper" --pick ;;
   "󱎓  Приватные файлы") exec "$HOME/.local/bin/arch-access" ;;
   "󰚰  Обновить setup") exec "$HOME/.local/bin/update-imba-script" ;;
   "󰏗  Обновить систему") exec "$HOME/.local/bin/update-system" ;;
@@ -990,8 +1182,10 @@ open_target() {
     bluetooth) exec blueman-manager ;;
     audio) exec pavucontrol ;;
     display) exec arandr ;;
+    display-layout) exec "$HOME/.local/bin/apply-monitor-layout" ;;
     bar) exec "$HOME/.local/bin/app-settings" panel-custom ;;
     appearance) exec lxappearance ;;
+    wallpaper) exec "$HOME/.local/bin/set-wallpaper" --pick ;;
     avatar) exec "$HOME/.local/bin/set-user-avatar" --pick ;;
     ssh) exec "$HOME/.local/bin/bind-ssh-key" --pick ;;
     private-files) exec "$HOME/.local/bin/arch-access" ;;
@@ -1022,6 +1216,8 @@ choice="$(
     "Bluetooth" "Подключение наушников, мышек и других устройств" \
     "Звук" "Выходы, входы и уровни громкости" \
     "Мониторы" "Положение экранов и разрешение" \
+    "Обновить layout мониторов" "Переразложить рабочие столы для 2+ мониторов" \
+    "Обои" "Поставить свои обои и применить сразу" \
     "Polybar" "Быстрая настройка bar и пресетов" \
     "Внешний вид" "GTK-тема, иконки, курсор и шрифты" \
     "Аватар" "Фото пользователя для greeter и lock screen" \
@@ -1041,6 +1237,8 @@ case "${selection}" in
   Bluetooth) open_target bluetooth ;;
   Звук) open_target audio ;;
   Мониторы) open_target display ;;
+  "Обновить layout мониторов") open_target display-layout ;;
+  Обои) open_target wallpaper ;;
   Polybar) open_target bar ;;
   "Внешний вид") open_target appearance ;;
   Аватар) open_target avatar ;;
@@ -1289,7 +1487,8 @@ format-muted = <label-muted>
 format-muted-padding = 1
 label-volume = 󰕾 %percentage%%
 label-muted = 󰝟
-click-right = pavucontrol
+click-right = ~/.local/bin/bar-context-menu
+click-middle = pavucontrol
 
 [module/date]
 type = internal/date
@@ -1305,6 +1504,7 @@ content = 󰐥
 content-padding = 1
 content-foreground = #F49BB4
 click-left = ~/.local/bin/power-menu
+click-right = ~/.local/bin/bar-context-menu
 EOF
 }
 
@@ -1401,17 +1601,12 @@ pgrep -x picom >/dev/null || picom --config "$HOME/.config/picom/picom.conf" &
 pgrep -x dunst >/dev/null || dunst &
 pgrep -x xss-lock >/dev/null || xss-lock --transfer-sleep-lock -- "$HOME/.local/bin/lock-screen" &
 
-"$HOME/.local/bin/launch-polybar"
-
 xsetroot -cursor_name left_ptr
 xset s 300 300
 xset dpms 600 660 720
 
-if [ -f "$HOME/Pictures/Wallpapers/wallpaper.jpg" ]; then
-  feh --bg-fill "$HOME/Pictures/Wallpapers/wallpaper.jpg"
-fi
-
-bspc monitor -d 1 2 3 4 5 6 7 8 9 10
+"$HOME/.local/bin/apply-wallpaper" >/dev/null 2>&1 || true
+"$HOME/.local/bin/apply-monitor-layout" >/dev/null 2>&1 || true
 
 bspc config border_width 0
 bspc config window_gap 0
@@ -1433,6 +1628,8 @@ bspc rule -a Blueman-manager state=floating center=on
 bspc rule -a Pavucontrol state=floating center=on
 bspc rule -a Lxappearance state=floating center=on
 bspc rule -a Arandr state=floating center=on
+
+"$HOME/.local/bin/launch-polybar"
 EOF
 
   chmod +x "${CONFIG_DIR}/bspwm/bspwmrc"
@@ -1468,6 +1665,13 @@ super + c
 alt + c
     ~/.local/bin/control-center
 
+# bar context menu
+super + ctrl + c
+    ~/.local/bin/bar-context-menu
+
+alt + ctrl + c
+    ~/.local/bin/bar-context-menu
+
 # system settings
 super + s
     ~/.local/bin/system-settings
@@ -1502,6 +1706,13 @@ super + e
 
 alt + e
     thunar
+
+# set wallpaper
+super + ctrl + w
+    ~/.local/bin/set-wallpaper --pick
+
+alt + ctrl + w
+    ~/.local/bin/set-wallpaper --pick
 
 # close focused window
 super + q
@@ -1551,6 +1762,13 @@ super + ctrl + b
 
 alt + ctrl + b
     ~/.local/bin/launch-polybar
+
+# re-apply monitor layout for multi-monitor setups
+super + ctrl + m
+    ~/.local/bin/apply-monitor-layout; ~/.local/bin/launch-polybar
+
+alt + ctrl + m
+    ~/.local/bin/apply-monitor-layout; ~/.local/bin/launch-polybar
 
 # privileged file access
 super + ctrl + a
@@ -1786,7 +2004,8 @@ format-muted-foreground = \${colors.muted}
 format-muted-padding = 1
 label-volume = 󰕾 %percentage%%
 label-muted = 󰝟
-click-right = pavucontrol
+click-right = ~/.local/bin/bar-context-menu
+click-middle = pavucontrol
 
 [module/network]
 type = custom/script
@@ -1796,7 +2015,8 @@ format-background = \${colors.surface}
 format-foreground = \${colors.foreground}
 format-padding = 1
 click-left = ~/.local/bin/system-settings network
-click-right = nm-connection-editor
+click-right = ~/.local/bin/bar-context-menu
+click-middle = nm-connection-editor
 
 [module/bluetooth]
 type = custom/script
@@ -1806,7 +2026,8 @@ format-background = \${colors.surface}
 format-foreground = \${colors.foreground}
 format-padding = 1
 click-left = ~/.local/bin/system-settings bluetooth
-click-right = blueman-manager
+click-right = ~/.local/bin/bar-context-menu
+click-middle = blueman-manager
 
 [module/battery]
 type = internal/battery
@@ -1862,7 +2083,8 @@ content-background = \${colors.surface-alt}
 content-foreground = \${colors.alert}
 content-padding = 1
 click-left = ~/.local/bin/power-menu
-click-right = ~/.local/bin/lock-screen
+click-right = ~/.local/bin/bar-context-menu
+click-middle = ~/.local/bin/lock-screen
 
 [module/tray]
 type = internal/tray
@@ -2400,27 +2622,31 @@ print_next_steps() {
   echo "2. Если хочешь свою аватарку на блокировке:"
   echo "   ~/.local/bin/set-user-avatar --pick"
   echo
-  echo "3. Если хочешь привязать свой SSH ключ вручную:"
+  echo "3. Если хочешь поставить свои обои:"
+  echo "   ~/.local/bin/set-wallpaper --pick"
+  echo
+  echo "4. Если хочешь привязать свой SSH ключ вручную:"
   echo "   ~/.local/bin/bind-ssh-key --pick"
   echo
-  echo "4. Доступ к приватным файлам:"
+  echo "5. Доступ к приватным файлам:"
   echo "   ~/.local/bin/arch-access"
   echo
-  echo "5. Обновление самого setup-скрипта:"
+  echo "6. Обновление самого setup-скрипта:"
   echo "   ~/.local/bin/update-imba-script"
   echo
-  echo "6. Кастомизация bar без ломки core:"
+  echo "7. Кастомизация bar без ломки core:"
   echo "   ~/.config/polybar/user.ini"
   echo "   ~/.local/bin/polybar-preset"
   echo
-  echo "7. Перезагрузи систему:"
+  echo "8. Перезагрузи систему:"
   echo "   sudo reboot"
   echo
-  echo "8. Главные хоткеи:"
+  echo "9. Главные хоткеи:"
   echo "   Alt+Return         -> терминал в тайлинге"
   echo "   Alt+Shift+Return   -> ещё один терминал"
   echo "   Alt+d              -> App Deck / выбор приложений"
   echo "   Alt+c              -> quick hub"
+  echo "   Alt+Ctrl+c         -> контекстное меню bar"
   echo "   Alt+s              -> системные настройки"
   echo "   Alt+,              -> настройки приложений"
   echo "   Alt+Shift+p        -> меню питания"
@@ -2430,6 +2656,8 @@ print_next_steps() {
   echo "   Alt+Ctrl+b         -> перезапуск bar"
   echo "   Alt+Ctrl+a         -> arch-access (приватные файлы)"
   echo "   Alt+Ctrl+u         -> обновить setup-скрипт"
+  echo "   Alt+Ctrl+w         -> сменить обои"
+  echo "   Alt+Ctrl+m         -> обновить layout мониторов + bar"
   echo "   Alt+Shift+l        -> кастомный lock screen (imba)"
   echo "   Alt+Shift+u        -> обновление системы"
   echo
@@ -2461,6 +2689,8 @@ main() {
   write_launch_polybar_script
   write_update_script
   write_self_update_script
+  write_wallpaper_scripts
+  write_monitor_layout_script
   write_launcher_script
   write_arch_access_script
   write_bar_context_menu_script
