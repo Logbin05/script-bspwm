@@ -57,9 +57,9 @@ done || true)"
 BATTERY_NAME="${BATTERY_NAME:-BAT0}"
 AC_NAME="${AC_NAME:-AC}"
 
-POLYBAR_RIGHT_MODULES="current-desktop updates cpu memory pulseaudio network bluetooth date tray control power"
+POLYBAR_RIGHT_MODULES="current-desktop updates pulseaudio network bluetooth date tray control power"
 if [[ -d "/sys/class/power_supply/${BATTERY_NAME}" ]]; then
-  POLYBAR_RIGHT_MODULES="current-desktop updates cpu memory pulseaudio network bluetooth battery date tray control power"
+  POLYBAR_RIGHT_MODULES="current-desktop updates pulseaudio network bluetooth battery date tray control power"
 fi
 
 PACKAGES=(
@@ -128,6 +128,7 @@ BACKUP_TARGETS=(
   "${LOCAL_BIN}/lock-screen"
   "${LOCAL_BIN}/open-app-launcher"
   "${LOCAL_BIN}/power-menu"
+  "${LOCAL_BIN}/polybar-preset"
   "${LOCAL_BIN}/bind-ssh-key"
   "${LOCAL_BIN}/set-user-avatar"
   "${LOCAL_BIN}/system-settings"
@@ -448,6 +449,7 @@ open_target() {
     terminal) open_terminal_editor "$HOME/.config/alacritty/alacritty.toml" ;;
     panel) open_terminal_editor "$HOME/.config/polybar/config.ini" ;;
     panel-custom) open_terminal_editor "$HOME/.config/polybar/user.ini" ;;
+    panel-preset) exec "$HOME/.local/bin/polybar-preset" ;;
     launcher) open_terminal_editor "$HOME/.config/rofi/launcher.rasi" ;;
     notifications) open_terminal_editor "$HOME/.config/dunst/dunstrc" ;;
     compositor) open_terminal_editor "$HOME/.config/picom/picom.conf" ;;
@@ -476,6 +478,7 @@ choice="$(
     "Alacritty" "Конфиг прозрачности, шрифта и цветов" \
     "Polybar" "Главный конфиг информативного хедбара" \
     "Polybar Custom" "Твой личный слой кастомизации bar без правки core" \
+    "Polybar Preset" "Быстрый выбор профиля: focus/balanced/monitoring" \
     "Rofi Launcher" "Сетка приложений и quick hub" \
     "Dunst" "Уведомления и их оформление" \
     "Picom" "Сглаживание, тени и плавность" \
@@ -491,6 +494,7 @@ case "${selection}" in
   Alacritty) open_target terminal ;;
   Polybar) open_target panel ;;
   "Polybar Custom") open_target panel-custom ;;
+  "Polybar Preset") open_target panel-preset ;;
   "Rofi Launcher") open_target launcher ;;
   Dunst) open_target notifications ;;
   Picom) open_target compositor ;;
@@ -665,11 +669,11 @@ set -euo pipefail
 current_desktop="$(bspc query -D -d focused --names 2>/dev/null || true)"
 
 if [[ -z "${current_desktop}" ]]; then
-  printf 'desk ?\n'
+  printf '󰆍 ?\n'
   exit 0
 fi
 
-printf 'desk %s\n' "${current_desktop}"
+printf '󰆍 %s\n' "${current_desktop}"
 EOF
 
   cat > "${CONFIG_DIR}/polybar/scripts/updates-status" <<'EOF'
@@ -710,28 +714,123 @@ write_polybar_user_config() {
 ; После правок можно применить так: super+shift+b
 
 [ui]
-height = 40
-radius = 20
+width = 96%
+offset-x = 2%
+offset-y = 12
+height = 42
+radius = 18
+padding-left = 2
+padding-right = 2
+module-margin = 1
 modules-left = launcher bspwm
 modules-center = xwindow
-modules-right = current-desktop updates cpu memory pulseaudio network bluetooth date tray control power
+modules-right = current-desktop updates pulseaudio network bluetooth date tray control power
 
 [colors]
 primary = #79D0B8
 secondary = #F6C177
 alert = #F28FAD
+surface = #F1161B21
+surface-alt = #F11D252D
 
 [module/xwindow]
-label = %title:0:64:...%
+label = %title:0:68:...%
 
 [module/date]
-date = %a %d %b
+date = %d %b
 time = %H:%M
 
 ; Пример минималистичного профиля:
 ; [ui]
 ; modules-right = current-desktop pulseaudio network battery date tray power
+
+; Быстрый выбор профиля без ручной правки:
+; ~/.local/bin/polybar-preset
 EOF
+}
+
+write_polybar_preset_script() {
+  cat > "${LOCAL_BIN}/polybar-preset" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+user_file="${HOME}/.config/polybar/user.ini"
+mark_begin="# >>> IMBA BAR PRESET >>>"
+mark_end="# <<< IMBA BAR PRESET <<<"
+preset="${1:-}"
+
+has_battery() {
+  local d
+  for d in /sys/class/power_supply/*; do
+    [[ -f "${d}/type" ]] || continue
+    if grep -qx "Battery" "${d}/type"; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+if [[ -z "${preset}" ]]; then
+  preset="$(
+    printf '%s\n' "balanced" "focus" "monitoring" |
+      rofi -dmenu -i -p "bar preset" -theme "$HOME/.config/rofi/menu.rasi" || true
+  )"
+fi
+
+battery_module=""
+if has_battery; then
+  battery_module=" battery"
+fi
+
+case "${preset}" in
+  balanced)
+    modules_right="current-desktop updates pulseaudio network bluetooth${battery_module} date tray control power"
+    title_len="64"
+    ;;
+  focus)
+    modules_right="current-desktop pulseaudio network${battery_module} date tray power"
+    title_len="86"
+    ;;
+  monitoring)
+    modules_right="current-desktop updates cpu memory pulseaudio network bluetooth${battery_module} date tray control power"
+    title_len="54"
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+
+mkdir -p "${HOME}/.config/polybar"
+touch "${user_file}"
+
+tmp_file="$(mktemp)"
+trap 'rm -f "${tmp_file}"' EXIT
+
+awk -v begin="${mark_begin}" -v end="${mark_end}" '
+  $0 == begin { skip=1; next }
+  $0 == end { skip=0; next }
+  !skip { print }
+' "${user_file}" > "${tmp_file}"
+
+{
+  cat "${tmp_file}"
+  [[ -s "${tmp_file}" ]] && printf '\n'
+  printf '%s\n' "${mark_begin}"
+  printf '%s\n' "[ui]"
+  printf 'modules-right = %s\n' "${modules_right}"
+  printf '%s\n' "[module/xwindow]"
+  printf 'label = %%title:0:%s:...%%\n' "${title_len}"
+  printf '%s\n' "${mark_end}"
+} > "${user_file}"
+
+if command -v notify-send >/dev/null 2>&1 && [[ -n "${DISPLAY:-}" ]]; then
+  notify-send "Bar preset" "Применён профиль: ${preset}"
+fi
+
+bspc wm -r >/dev/null 2>&1 || true
+EOF
+
+  chmod +x "${LOCAL_BIN}/polybar-preset"
 }
 
 write_bspwm_config() {
@@ -947,23 +1046,24 @@ screenchange-reload = true
 pseudo-transparency = true
 
 [colors]
-background = #D9101418
-surface = #F1161B21
-surface-alt = #F11D252D
-foreground = #F5F7FA
-muted = #93A0AD
-primary = #79D0B8
-secondary = #F6C177
-alert = #F28FAD
-border = #2B343F
+background = #D60B0F14
+surface = #EF151B23
+surface-alt = #F0262F3A
+foreground = #F6F7F9
+muted = #91A0AE
+primary = #84D8C2
+secondary = #F3C782
+accent = #8FB9FF
+alert = #F49BB4
+border = #28323D
 shadow = #00000000
 
 [ui]
 width = 96%
 offset-x = 2%
 offset-y = 12
-height = 40
-radius = 20
+height = 42
+radius = 18
 padding-left = 2
 padding-right = 2
 module-margin = 1
@@ -986,7 +1086,7 @@ border-color = \${colors.border}
 padding-left = \${ui.padding-left}
 padding-right = \${ui.padding-right}
 module-margin = \${ui.module-margin}
-separator = " "
+separator =
 wm-restack = bspwm
 enable-ipc = true
 cursor-click = pointer
@@ -1007,8 +1107,8 @@ format-padding = 2
 [module/launcher]
 type = custom/text
 content = 󰣇
-content-background = \${colors.surface-alt}
-content-foreground = \${colors.primary}
+content-background = \${colors.surface}
+content-foreground = \${colors.accent}
 content-padding = 2
 click-left = ~/.local/bin/open-app-launcher
 click-right = ~/.local/bin/control-center
@@ -1029,45 +1129,45 @@ ws-icon-7 = 8;8
 ws-icon-8 = 9;9
 ws-icon-9 = 10;10
 format = <label-state>
-format-background = \${colors.surface}
+format-background = \${colors.surface-alt}
 format-foreground = \${colors.foreground}
-format-padding = 1
+format-padding = 2
 label-focused = %name%
-label-focused-background = transparent
-label-focused-foreground = \${colors.primary}
+label-focused-background = \${colors.primary}
+label-focused-foreground = #0d1116
 label-focused-padding = 1
-label-focused-margin = 0
+label-focused-margin = 1
 label-occupied = %name%
 label-occupied-background = transparent
 label-occupied-foreground = \${colors.foreground}
 label-occupied-padding = 1
-label-occupied-margin = 0
+label-occupied-margin = 1
 label-empty =
 label-empty-background = transparent
 label-empty-foreground = \${colors.muted}
 label-empty-padding = 0
 label-empty-margin = 0
 label-urgent = %name%
-label-urgent-background = transparent
-label-urgent-foreground = \${colors.alert}
+label-urgent-background = \${colors.alert}
+label-urgent-foreground = #0d1116
 label-urgent-padding = 1
-label-urgent-margin = 0
+label-urgent-margin = 1
 
 [module/current-desktop]
 type = custom/script
 exec = ~/.config/polybar/scripts/current-desktop-status
 interval = 1
 format-background = \${colors.surface-alt}
-format-foreground = \${colors.primary}
+format-foreground = \${colors.secondary}
 format-padding = 2
 
 [module/xwindow]
 type = internal/xwindow
-format-background = \${colors.surface}
+format-background = \${colors.surface-alt}
 format-foreground = \${colors.foreground}
 format-padding = 2
 label = %title:0:54:...%
-label-empty = desktop lounge
+label-empty = workspace
 label-empty-foreground = \${colors.muted}
 
 [module/updates]
@@ -1075,7 +1175,7 @@ type = custom/script
 exec = ~/.config/polybar/scripts/updates-status
 interval = 600
 format-background = \${colors.surface}
-format-foreground = \${colors.secondary}
+format-foreground = \${colors.accent}
 format-padding = 2
 click-left = ~/.local/bin/update-system
 click-right = ~/.local/bin/control-center
@@ -1169,7 +1269,7 @@ label = 󰃭 %time%  %date%
 [module/control]
 type = custom/text
 content = 󰒓
-content-background = \${colors.surface-alt}
+content-background = \${colors.surface}
 content-foreground = \${colors.secondary}
 content-padding = 2
 click-left = ~/.local/bin/control-center
@@ -1178,7 +1278,7 @@ click-right = ~/.local/bin/system-settings
 [module/power]
 type = custom/text
 content = 󰐥
-content-background = \${colors.surface-alt}
+content-background = \${colors.surface}
 content-foreground = \${colors.alert}
 content-padding = 2
 click-left = ~/.local/bin/power-menu
@@ -1187,6 +1287,7 @@ click-right = ~/.local/bin/lock-screen
 [module/tray]
 type = internal/tray
 format-background = \${colors.surface}
+format-foreground = \${colors.foreground}
 format-padding = 1
 tray-spacing = 8
 tray-size = 65%
@@ -1709,6 +1810,7 @@ print_next_steps() {
   echo
   echo "4. Кастомизация bar без ломки core:"
   echo "   ~/.config/polybar/user.ini"
+  echo "   ~/.local/bin/polybar-preset"
   echo
   echo "5. Перезагрузи систему:"
   echo "   sudo reboot"
@@ -1727,7 +1829,8 @@ print_next_steps() {
   echo "   Alt+Shift+l        -> lock screen с логином/паролем"
   echo "   Alt+Shift+u        -> обновление системы"
   echo
-  echo "Верхняя панель теперь показывает обновления, CPU, RAM, звук, сеть, Bluetooth, батарею и время."
+  echo "Верхняя панель по умолчанию сбалансирована для работы: звук, сеть, Bluetooth, дата, трей и быстрые действия."
+  echo "Через ~/.local/bin/polybar-preset можно моментально включить monitoring-профиль с CPU/RAM."
   echo "Сессия теперь поднимается через LightDM: есть greeter, поля логина/пароля и аватар пользователя."
   echo "Столы в баре ужаты до цифр, а активный рабочий стол вынесен отдельным индикатором справа."
 }
@@ -1751,6 +1854,7 @@ main() {
   write_launcher_script
   write_control_center_script
   write_power_menu_script
+  write_polybar_preset_script
   write_avatar_script
   write_ssh_key_script
   write_app_settings_script
