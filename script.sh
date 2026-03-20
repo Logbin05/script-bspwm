@@ -624,8 +624,12 @@ fi
 
 bspc monitor -d I II III IV V VI VII VIII IX X
 
-bspc config border_width 2
-bspc config window_gap 18
+for desktop in I II III IV V VI VII VIII IX X; do
+  bspc desktop "${desktop}" -l monocle
+done
+
+bspc config border_width 0
+bspc config window_gap 0
 bspc config split_ratio 0.52
 bspc config borderless_monocle true
 bspc config gapless_monocle true
