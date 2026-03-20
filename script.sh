@@ -545,6 +545,7 @@ open_target() {
     bluetooth) exec blueman-manager ;;
     audio) exec pavucontrol ;;
     display) exec arandr ;;
+    bar) exec "$HOME/.local/bin/app-settings" panel-custom ;;
     appearance) exec lxappearance ;;
     avatar) exec "$HOME/.local/bin/set-user-avatar" --pick ;;
     ssh) exec "$HOME/.local/bin/bind-ssh-key" --pick ;;
@@ -574,6 +575,7 @@ choice="$(
     "Bluetooth" "Подключение наушников, мышек и других устройств" \
     "Звук" "Выходы, входы и уровни громкости" \
     "Мониторы" "Положение экранов и разрешение" \
+    "Polybar" "Быстрая настройка bar и пресетов" \
     "Внешний вид" "GTK-тема, иконки, курсор и шрифты" \
     "Аватар" "Фото пользователя для greeter и lock screen" \
     "SSH ключ" "Привязка SSH ключа к учётке и авто-agent" \
@@ -590,6 +592,7 @@ case "${selection}" in
   Bluetooth) open_target bluetooth ;;
   Звук) open_target audio ;;
   Мониторы) open_target display ;;
+  Polybar) open_target bar ;;
   "Внешний вид") open_target appearance ;;
   Аватар) open_target avatar ;;
   "SSH ключ") open_target ssh ;;
