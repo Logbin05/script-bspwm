@@ -63,6 +63,7 @@ if [[ -d "/sys/class/power_supply/${BATTERY_NAME}" ]]; then
 fi
 
 PACKAGES=(
+  accountsservice
   alacritty
   arandr
   blueman
@@ -74,8 +75,10 @@ PACKAGES=(
   fastfetch
   feh
   firefox
-  i3lock
   libnotify
+  light-locker
+  lightdm
+  lightdm-slick-greeter
   lxappearance
   network-manager-applet
   networkmanager
@@ -98,7 +101,6 @@ PACKAGES=(
   xorg-xinit
   xorg-xrandr
   xorg-xsetroot
-  xss-lock
   yad
 )
 
@@ -123,6 +125,7 @@ BACKUP_TARGETS=(
   "${LOCAL_BIN}/lock-screen"
   "${LOCAL_BIN}/open-app-launcher"
   "${LOCAL_BIN}/power-menu"
+  "${LOCAL_BIN}/set-user-avatar"
   "${LOCAL_BIN}/system-settings"
   "${LOCAL_BIN}/update-system"
   "${USER_HOME}/.bash_profile"
@@ -173,7 +176,16 @@ write_lock_screen() {
 #!/usr/bin/env bash
 set -euo pipefail
 
-exec i3lock -n -c 101418
+if command -v light-locker-command >/dev/null 2>&1; then
+  exec light-locker-command -l
+fi
+
+if command -v dm-tool >/dev/null 2>&1; then
+  exec dm-tool switch-to-greeter
+fi
+
+printf 'Не найден light-locker или dm-tool.\n' >&2
+exit 1
 EOF
 
   chmod +x "${LOCAL_BIN}/lock-screen"
@@ -286,7 +298,11 @@ choice="$(
 
 case "${choice}" in
   "󰍃  Заблокировать") exec "$HOME/.local/bin/lock-screen" ;;
-  "󰤄  Сон") systemctl suspend ;;
+  "󰤄  Сон")
+    "$HOME/.local/bin/lock-screen"
+    sleep 0.8
+    systemctl suspend
+    ;;
   "󰜉  Перезагрузить") systemctl reboot ;;
   "󰐥  Выключить") systemctl poweroff ;;
   "󰗼  Выйти из bspwm") bspc quit ;;
@@ -294,6 +310,51 @@ esac
 EOF
 
   chmod +x "${LOCAL_BIN}/power-menu"
+}
+
+write_avatar_script() {
+  cat > "${LOCAL_BIN}/set-user-avatar" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+pick_avatar() {
+  yad \
+    --file \
+    --title="Выбери аватар" \
+    --file-filter="Images | *.png *.jpg *.jpeg *.webp *.bmp" || true
+}
+
+source_path="${1:-}"
+
+if [[ -z "${source_path}" || "${source_path}" == "--pick" ]]; then
+  source_path="$(pick_avatar)"
+fi
+
+[[ -n "${source_path:-}" ]] || exit 0
+[[ -f "${source_path}" ]] || {
+  printf 'Файл не найден: %s\n' "${source_path}" >&2
+  exit 1
+}
+
+user_name="${SUDO_USER:-$USER}"
+dest="/var/lib/AccountsService/icons/${user_name}"
+account_file="/var/lib/AccountsService/users/${user_name}"
+
+sudo install -d /var/lib/AccountsService/icons /var/lib/AccountsService/users
+sudo install -m 644 "${source_path}" "${dest}"
+sudo tee "${account_file}" >/dev/null <<EOF2
+[User]
+Icon=${dest}
+EOF2
+sudo chmod 644 "${dest}" "${account_file}"
+install -Dm644 "${source_path}" "${HOME}/.face"
+
+if command -v notify-send >/dev/null 2>&1 && [[ -n "${DISPLAY:-}" ]]; then
+  notify-send "Аватар обновлён" "Новая аватарка появится на экране блокировки."
+fi
+EOF
+
+  chmod +x "${LOCAL_BIN}/set-user-avatar"
 }
 
 write_app_settings_script() {
@@ -375,6 +436,7 @@ open_target() {
     audio) exec pavucontrol ;;
     display) exec arandr ;;
     appearance) exec lxappearance ;;
+    avatar) exec "$HOME/.local/bin/set-user-avatar" --pick ;;
     updates) exec "$HOME/.local/bin/update-system" ;;
     power) exec "$HOME/.local/bin/power-menu" ;;
     *) exit 0 ;;
@@ -402,6 +464,7 @@ choice="$(
     "Звук" "Выходы, входы и уровни громкости" \
     "Мониторы" "Положение экранов и разрешение" \
     "Внешний вид" "GTK-тема, иконки, курсор и шрифты" \
+    "Аватар" "Фото пользователя для greeter и lock screen" \
     "Обновления" "Полное обновление Arch-системы" \
     "Питание" "Lock, suspend, reboot и shutdown" \
     --button="Открыть:0" \
@@ -416,6 +479,7 @@ case "${selection}" in
   Звук) open_target audio ;;
   Мониторы) open_target display ;;
   "Внешний вид") open_target appearance ;;
+  Аватар) open_target avatar ;;
   Обновления) open_target updates ;;
   Питание) open_target power ;;
 esac
@@ -546,12 +610,14 @@ write_bspwm_config() {
 pgrep -x sxhkd >/dev/null || sxhkd &
 pgrep -x picom >/dev/null || picom --config "$HOME/.config/picom/picom.conf" &
 pgrep -x dunst >/dev/null || dunst &
-pgrep -x xss-lock >/dev/null || xss-lock --transfer-sleep-lock -- "$HOME/.local/bin/lock-screen" &
+pgrep -x light-locker >/dev/null || light-locker --lock-on-suspend --no-late-locking &
 
 pkill polybar >/dev/null 2>&1 || true
 polybar main >/tmp/polybar-main.log 2>&1 &
 
 xsetroot -cursor_name left_ptr
+xset s 300 300
+xset dpms 600 660 720
 
 if [ -f "$HOME/Pictures/Wallpapers/wallpaper.jpg" ]; then
   feh --bg-fill "$HOME/Pictures/Wallpapers/wallpaper.jpg"
@@ -1336,24 +1402,47 @@ EOF
   chmod +x "${USER_HOME}/.xinitrc"
 
   cat > "${USER_HOME}/.bash_profile" <<'EOF'
-if [[ -z "${DISPLAY:-}" ]] && [[ "${XDG_VTNR:-0}" -eq 1 ]]; then
-  exec startx
-fi
+[[ -f "${HOME}/.bashrc" ]] && . "${HOME}/.bashrc"
 EOF
 }
 
-configure_autologin() {
-  info "Автологин в tty1 и systemd reload"
+configure_display_manager() {
+  info "Настройка LightDM, greeter и lock screen"
 
-  sudo mkdir -p /etc/systemd/system/getty@tty1.service.d
-  cat <<EOF | sudo tee /etc/systemd/system/getty@tty1.service.d/autologin.conf >/dev/null
-[Service]
-ExecStart=
-ExecStart=-/sbin/agetty --autologin ${USER_NAME} --noclear %I \$TERM
+  sudo groupadd -f autologin
+  sudo gpasswd -a "${USER_NAME}" autologin >/dev/null
+
+  sudo install -d /etc/lightdm/lightdm.conf.d
+  cat <<EOF | sudo tee /etc/lightdm/lightdm.conf.d/50-imba-bspwm.conf >/dev/null
+[Seat:*]
+greeter-session=lightdm-slick-greeter
+session-wrapper=/etc/lightdm/Xsession
+user-session=bspwm
+autologin-user=${USER_NAME}
+autologin-session=bspwm
+greeter-show-manual-login=true
+greeter-hide-users=false
+logind-check-graphical=true
 EOF
 
+  cat <<'EOF' | sudo tee /etc/lightdm/slick-greeter.conf >/dev/null
+[Greeter]
+theme-name=Adwaita-dark
+icon-theme-name=Papirus-Dark
+background-color=#101418
+draw-user-backgrounds=false
+EOF
+
+  sudo mkdir -p /etc/systemd/system/getty@tty1.service.d
+  cat <<'EOF' | sudo tee /etc/systemd/system/getty@tty1.service.d/autologin.conf >/dev/null
+[Service]
+ExecStart=
+ExecStart=-/sbin/agetty --noclear %I $TERM
+EOF
+
+  sudo systemctl enable lightdm
   sudo systemctl daemon-reload
-  done_msg "Автологин настроен."
+  done_msg "LightDM и новый lock screen настроены."
 }
 
 append_fastfetch() {
@@ -1397,10 +1486,13 @@ print_next_steps() {
   echo "1. Положи обои сюда:"
   echo "   ${WALLPAPER}"
   echo
-  echo "2. Перезагрузи систему:"
+  echo "2. Если хочешь свою аватарку на блокировке:"
+  echo "   ~/.local/bin/set-user-avatar --pick"
+  echo
+  echo "3. Перезагрузи систему:"
   echo "   sudo reboot"
   echo
-  echo "3. Главные хоткеи:"
+  echo "4. Главные хоткеи:"
   echo "   Alt+Return         -> dropdown-терминал"
   echo "   Alt+Shift+Return   -> обычный терминал"
   echo "   Alt+d              -> App Deck / выбор приложений"
@@ -1411,11 +1503,11 @@ print_next_steps() {
   echo "   Alt+b              -> Firefox"
   echo "   Alt+e              -> Thunar"
   echo "   Alt+q              -> закрыть окно"
-  echo "   Alt+Shift+l        -> блокировка экрана"
+  echo "   Alt+Shift+l        -> lock screen с логином/паролем"
   echo "   Alt+Shift+u        -> обновление системы"
   echo
   echo "Верхняя панель теперь показывает обновления, CPU, RAM, звук, сеть, Bluetooth, батарею и время."
-  echo "Обычный выход из bspwm хоткеями отключён. Аварийный доступ оставлен через Ctrl+Alt+F2."
+  echo "Сессия теперь поднимается через LightDM: есть greeter, поля логина/пароля и аватар пользователя."
 }
 
 main() {
@@ -1437,6 +1529,7 @@ main() {
   write_launcher_script
   write_control_center_script
   write_power_menu_script
+  write_avatar_script
   write_app_settings_script
   write_system_settings_script
   write_polybar_scripts
@@ -1452,7 +1545,18 @@ main() {
   write_x_session
   done_msg "Новая тема и окружение записаны."
 
-  configure_autologin
+  configure_display_manager
+
+  info "Проверка аватара пользователя"
+  if [[ -f "${USER_HOME}/Pictures/avatar.png" ]]; then
+    "${LOCAL_BIN}/set-user-avatar" "${USER_HOME}/Pictures/avatar.png"
+    done_msg "Аватар из ~/Pictures/avatar.png применён."
+  elif [[ -f "${USER_HOME}/.face" ]]; then
+    "${LOCAL_BIN}/set-user-avatar" "${USER_HOME}/.face"
+    done_msg "Аватар из ~/.face применён."
+  else
+    warn "Аватар не найден. Позже можно запустить ~/.local/bin/set-user-avatar --pick."
+  fi
 
   info "fastfetch в bashrc"
   if append_fastfetch; then
