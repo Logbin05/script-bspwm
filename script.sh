@@ -46,6 +46,9 @@ readonly CONFIG_DIR="${USER_HOME}/.config"
 readonly LOCAL_BIN="${USER_HOME}/.local/bin"
 readonly WALL_DIR="${USER_HOME}/Pictures/Wallpapers"
 readonly WALLPAPER="${WALL_DIR}/wallpaper.jpg"
+readonly IMBA_STATE_DIR="${CONFIG_DIR}/imba-bspwm"
+readonly SCRIPT_SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_SOURCE_FILE="${IMBA_STATE_DIR}/source-dir"
 
 BATTERY_NAME="$(for d in /sys/class/power_supply/*; do
   [[ -f "${d}/type" ]] && grep -qx 'Battery' "${d}/type" && basename "${d}" && break
@@ -57,9 +60,9 @@ done || true)"
 BATTERY_NAME="${BATTERY_NAME:-BAT0}"
 AC_NAME="${AC_NAME:-AC}"
 
-POLYBAR_RIGHT_MODULES="current-desktop updates pulseaudio network bluetooth date tray control power"
+POLYBAR_RIGHT_MODULES="current-desktop pulseaudio network bluetooth date updates tray power"
 if [[ -d "/sys/class/power_supply/${BATTERY_NAME}" ]]; then
-  POLYBAR_RIGHT_MODULES="current-desktop updates pulseaudio network bluetooth battery date tray control power"
+  POLYBAR_RIGHT_MODULES="current-desktop pulseaudio network bluetooth battery date updates tray power"
 fi
 
 PACKAGES=(
@@ -75,6 +78,7 @@ PACKAGES=(
   fastfetch
   feh
   firefox
+  git
   libnotify
   light-locker
   lightdm
@@ -122,6 +126,7 @@ BACKUP_TARGETS=(
   "${CONFIG_DIR}/rofi/launcher.rasi"
   "${CONFIG_DIR}/rofi/menu.rasi"
   "${CONFIG_DIR}/sxhkd/sxhkdrc"
+  "${SCRIPT_SOURCE_FILE}"
   "${LOCAL_BIN}/app-settings"
   "${LOCAL_BIN}/arch-access"
   "${LOCAL_BIN}/bar-context-menu"
@@ -135,6 +140,7 @@ BACKUP_TARGETS=(
   "${LOCAL_BIN}/bind-ssh-key"
   "${LOCAL_BIN}/set-user-avatar"
   "${LOCAL_BIN}/system-settings"
+  "${LOCAL_BIN}/update-imba-script"
   "${LOCAL_BIN}/update-system"
   "${USER_HOME}/.ssh/config"
   "${USER_HOME}/.bash_profile"
@@ -146,6 +152,7 @@ BACKUP_TARGETS=(
 create_directories() {
   mkdir -p \
     "${CONFIG_DIR}/systemd/user/sockets.target.wants" \
+    "${IMBA_STATE_DIR}" \
     "${CONFIG_DIR}/alacritty" \
     "${CONFIG_DIR}/bspwm" \
     "${CONFIG_DIR}/dunst" \
@@ -249,6 +256,145 @@ exec alacritty --class settings-editor -e bash -lc 'sudo pacman -Syu; echo; read
 EOF
 
   chmod +x "${LOCAL_BIN}/update-system"
+}
+
+write_self_update_script() {
+  cat > "${LOCAL_BIN}/update-imba-script" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+state_file="${XDG_CONFIG_HOME:-$HOME/.config}/imba-bspwm/source-dir"
+
+usage() {
+  cat <<'USAGE'
+Использование: update-imba-script [путь_к_репозиторию]
+             update-imba-script --set-source <путь_к_репозиторию>
+
+- Без аргументов обновляет репозиторий, который был сохранён установщиком.
+- Можно передать путь до repo вручную.
+- Команда работает только в git-репозитории.
+USAGE
+}
+
+notify_msg() {
+  local title="$1"
+  local body="$2"
+  if command -v notify-send >/dev/null 2>&1 && [[ -n "${DISPLAY:-}" ]]; then
+    notify-send "${title}" "${body}"
+  fi
+}
+
+fail() {
+  local msg="$1"
+  printf '[ERROR] %s\n' "${msg}" >&2
+  notify_msg "Script update failed" "${msg}"
+  exit 1
+}
+
+store_repo() {
+  local repo="$1"
+  mkdir -p "$(dirname "${state_file}")"
+  printf '%s\n' "${repo}" > "${state_file}"
+}
+
+resolve_repo() {
+  local arg="${1:-}"
+
+  if [[ -n "${arg}" ]]; then
+    printf '%s' "${arg}"
+    return
+  fi
+
+  if [[ -n "${IMBA_SCRIPT_SOURCE:-}" ]]; then
+    printf '%s' "${IMBA_SCRIPT_SOURCE}"
+    return
+  fi
+
+  if [[ -f "${state_file}" ]]; then
+    head -n 1 "${state_file}"
+    return
+  fi
+
+  printf '%s' "$PWD"
+}
+
+arg="${1:-}"
+
+case "${arg}" in
+  -h|--help)
+    usage
+    exit 0
+    ;;
+  --set-source)
+    [[ $# -ge 2 ]] || fail "Для --set-source нужен путь к репозиторию."
+    repo_set="${2/#\~/$HOME}"
+    repo_set="$(realpath -m "${repo_set}")"
+    [[ -d "${repo_set}/.git" ]] || fail "Путь не похож на git-репозиторий: ${repo_set}"
+    store_repo "${repo_set}"
+    printf '[OK] Источник обновления сохранён: %s\n' "${repo_set}"
+    notify_msg "Script updater" "Новый источник: ${repo_set}"
+    exit 0
+    ;;
+esac
+
+repo_dir="$(resolve_repo "${arg}")"
+repo_dir="${repo_dir/#\~/$HOME}"
+repo_dir="$(realpath -m "${repo_dir}")"
+
+command -v git >/dev/null 2>&1 || fail "git не найден."
+[[ -d "${repo_dir}" ]] || fail "Каталог не найден: ${repo_dir}"
+[[ -d "${repo_dir}/.git" ]] || fail "Это не git-репозиторий: ${repo_dir}"
+git -C "${repo_dir}" rev-parse --is-inside-work-tree >/dev/null 2>&1 || fail "Невалидный git-репозиторий: ${repo_dir}"
+
+branch="$(git -C "${repo_dir}" rev-parse --abbrev-ref HEAD)"
+[[ "${branch}" != "HEAD" ]] || fail "Детачнутый HEAD. Переключись на обычную ветку перед обновлением."
+
+if ! git -C "${repo_dir}" diff --quiet || ! git -C "${repo_dir}" diff --cached --quiet; then
+  fail "В репозитории есть локальные изменения. Сначала commit/stash."
+fi
+
+store_repo "${repo_dir}"
+printf '[INFO] Проверяю обновления setup-скрипта в %s\n' "${repo_dir}"
+
+upstream_ref="$(git -C "${repo_dir}" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)"
+if [[ -n "${upstream_ref}" ]]; then
+  remote_name="${upstream_ref%%/*}"
+  remote_branch="${upstream_ref#*/}"
+else
+  remote_name="origin"
+  remote_branch="${branch}"
+fi
+
+git -C "${repo_dir}" fetch --quiet "${remote_name}" "${remote_branch}" || fail "Не удалось получить изменения с ${remote_name}/${remote_branch}."
+
+local_sha="$(git -C "${repo_dir}" rev-parse HEAD)"
+remote_sha="$(git -C "${repo_dir}" rev-parse "${remote_name}/${remote_branch}" 2>/dev/null || true)"
+
+if [[ -z "${remote_sha}" ]]; then
+  fail "Не удалось определить ${remote_name}/${remote_branch}."
+fi
+
+if [[ "${local_sha}" == "${remote_sha}" ]]; then
+  printf '[OK] Скрипт уже актуален.\n'
+  notify_msg "Script updater" "Новых обновлений нет."
+  exit 0
+fi
+
+behind_count="$(git -C "${repo_dir}" rev-list --count "${local_sha}..${remote_sha}" 2>/dev/null || echo '?')"
+printf '[INFO] Найдено %s новых коммит(ов), обновляю...\n' "${behind_count}"
+
+git -C "${repo_dir}" pull --ff-only || fail "Не удалось применить обновление (ff-only)."
+
+new_short_sha="$(git -C "${repo_dir}" rev-parse --short HEAD)"
+printf '[OK] Скрипт обновлён до %s\n' "${new_short_sha}"
+notify_msg "Script updater" "Обновлено до ${new_short_sha}"
+EOF
+
+  chmod +x "${LOCAL_BIN}/update-imba-script"
+}
+
+write_script_source_marker() {
+  printf '%s\n' "${SCRIPT_SOURCE_DIR}" > "${SCRIPT_SOURCE_FILE}"
 }
 
 write_launcher_script() {
@@ -364,6 +510,7 @@ choice="$(
     '󰖟  Polybar preset' \
     '󰇚  Polybar custom' \
     '󱎓  Приватные файлы (arch-access)' \
+    '󰚰  Обновить setup' \
     '󰈆  Перезапустить bar' \
     '󰏗  Обновить систему' \
     '󰐥  Меню питания' |
@@ -377,6 +524,7 @@ case "${choice}" in
   "󰖟  Polybar preset") exec "$HOME/.local/bin/polybar-preset" ;;
   "󰇚  Polybar custom") exec "$HOME/.local/bin/app-settings" panel-custom ;;
   "󱎓  Приватные файлы (arch-access)") exec "$HOME/.local/bin/arch-access" ;;
+  "󰚰  Обновить setup") exec "$HOME/.local/bin/update-imba-script" ;;
   "󰈆  Перезапустить bar") exec "$HOME/.local/bin/launch-polybar" ;;
   "󰏗  Обновить систему") exec "$HOME/.local/bin/update-system" ;;
   "󰐥  Меню питания") exec "$HOME/.local/bin/power-menu" ;;
@@ -397,6 +545,7 @@ choice="$(
     '󰛳  Настройки приложений' \
     '󰒓  Системные настройки' \
     '󱎓  Приватные файлы' \
+    '󰚰  Обновить setup' \
     '󰏗  Обновить систему' \
     '󰐥  Меню питания' |
     rofi -dmenu -i -p "hub" -theme "$HOME/.config/rofi/menu.rasi" || true
@@ -407,6 +556,7 @@ case "${choice}" in
   "󰛳  Настройки приложений") exec "$HOME/.local/bin/app-settings" ;;
   "󰒓  Системные настройки") exec "$HOME/.local/bin/system-settings" ;;
   "󱎓  Приватные файлы") exec "$HOME/.local/bin/arch-access" ;;
+  "󰚰  Обновить setup") exec "$HOME/.local/bin/update-imba-script" ;;
   "󰏗  Обновить систему") exec "$HOME/.local/bin/update-system" ;;
   "󰐥  Меню питания") exec "$HOME/.local/bin/power-menu" ;;
 esac
@@ -678,6 +828,7 @@ open_target() {
     avatar) exec "$HOME/.local/bin/set-user-avatar" --pick ;;
     ssh) exec "$HOME/.local/bin/bind-ssh-key" --pick ;;
     private-files) exec "$HOME/.local/bin/arch-access" ;;
+    script-updates) exec "$HOME/.local/bin/update-imba-script" ;;
     updates) exec "$HOME/.local/bin/update-system" ;;
     power) exec "$HOME/.local/bin/power-menu" ;;
     *) exit 0 ;;
@@ -709,6 +860,7 @@ choice="$(
     "Аватар" "Фото пользователя для greeter и lock screen" \
     "SSH ключ" "Привязка SSH ключа к учётке и авто-agent" \
     "Приватные файлы" "Открыть защищённые пути через arch-access" \
+    "Обновить setup" "Проверить и подтянуть новую версию script.sh из репозитория" \
     "Обновления" "Полное обновление Arch-системы" \
     "Питание" "Lock, suspend, reboot и shutdown" \
     --button="Открыть:0" \
@@ -727,6 +879,7 @@ case "${selection}" in
   Аватар) open_target avatar ;;
   "SSH ключ") open_target ssh ;;
   "Приватные файлы") open_target private-files ;;
+  "Обновить setup") open_target script-updates ;;
   Обновления) open_target updates ;;
   Питание) open_target power ;;
 esac
@@ -742,7 +895,7 @@ set -euo pipefail
 
 trim_label() {
   local label="$1"
-  local max_len=18
+  local max_len=14
 
   if (( ${#label} > max_len )); then
     printf '%s…' "${label:0:max_len-1}"
@@ -779,11 +932,11 @@ if [[ -n "${active_wifi}" ]]; then
 fi
 
 if [[ "${wired_state:-no}" == "yes" ]]; then
-  printf '󰈀 wired\n'
+  printf '󰈀 eth\n'
   exit 0
 fi
 
-printf '󰤮 offline\n'
+printf '󰤮\n'
 EOF
 
   cat > "${CONFIG_DIR}/polybar/scripts/bluetooth-status" <<'EOF'
@@ -792,7 +945,7 @@ set -euo pipefail
 
 trim_label() {
   local label="$1"
-  local max_len=16
+  local max_len=12
 
   if (( ${#label} > max_len )); then
     printf '%s…' "${label:0:max_len-1}"
@@ -807,7 +960,7 @@ powered="$(
 )"
 
 if [[ "${powered:-no}" != "yes" ]]; then
-  printf '󰂲 off\n'
+  printf '󰂲\n'
   exit 0
 fi
 
@@ -822,7 +975,7 @@ if [[ -n "${device}" ]]; then
   exit 0
 fi
 
-printf '󰂯 ready\n'
+printf '󰂯\n'
 EOF
 
   cat > "${CONFIG_DIR}/polybar/scripts/current-desktop-status" <<'EOF'
@@ -844,14 +997,14 @@ EOF
 set -euo pipefail
 
 if ! command -v checkupdates >/dev/null 2>&1; then
-  printf '󰄬 fresh\n'
+  printf '󰄬\n'
   exit 0
 fi
 
 count="$(checkupdates 2>/dev/null | wc -l | tr -d ' ' || true)"
 
 if [[ -z "${count}" || "${count}" == "0" ]]; then
-  printf '󰄬 fresh\n'
+  printf '󰄬\n'
   exit 0
 fi
 
@@ -877,35 +1030,36 @@ write_polybar_user_config() {
 ; После правок можно применить так: super+shift+b
 
 [ui]
-width = 96%
-offset-x = 2%
-offset-y = 12
-height = 42
-radius = 18
-padding-left = 2
-padding-right = 2
-module-margin = 1
+width = 98%
+offset-x = 1%
+offset-y = 8
+height = 34
+radius = 12
+padding-left = 1
+padding-right = 1
+module-margin = 0
 modules-left = launcher bspwm
 modules-center = xwindow
-modules-right = current-desktop updates pulseaudio network bluetooth date tray control power
+modules-right = current-desktop pulseaudio network bluetooth date updates tray power
 
 [colors]
-primary = #79D0B8
-secondary = #F6C177
-alert = #F28FAD
-surface = #F1161B21
-surface-alt = #F11D252D
+primary = #84D8C2
+secondary = #F3C782
+accent = #8FB9FF
+alert = #F49BB4
+surface = #EA131922
+surface-alt = #F01A232E
 
 [module/xwindow]
-label = %title:0:68:...%
+label = %title:0:46:...%
 
 [module/date]
-date = %d %b
+date = %a %d %b
 time = %H:%M
 
 ; Пример минималистичного профиля:
 ; [ui]
-; modules-right = current-desktop pulseaudio network battery date tray power
+; modules-right = current-desktop pulseaudio network battery date updates power
 
 ; Быстрый выбор профиля без ручной правки:
 ; ~/.local/bin/polybar-preset
@@ -947,16 +1101,16 @@ fi
 
 case "${preset}" in
   balanced)
-    modules_right="current-desktop updates pulseaudio network bluetooth${battery_module} date tray control power"
-    title_len="64"
+    modules_right="current-desktop pulseaudio network bluetooth${battery_module} date updates tray power"
+    title_len="46"
     ;;
   focus)
-    modules_right="current-desktop pulseaudio network${battery_module} date tray power"
-    title_len="86"
+    modules_right="current-desktop pulseaudio network${battery_module} date power"
+    title_len="58"
     ;;
   monitoring)
-    modules_right="current-desktop updates cpu memory pulseaudio network bluetooth${battery_module} date tray control power"
-    title_len="54"
+    modules_right="current-desktop cpu memory pulseaudio network bluetooth${battery_module} date updates tray power"
+    title_len="40"
     ;;
   *)
     exit 0
@@ -1128,6 +1282,13 @@ super + shift + u
 alt + shift + u
     ~/.local/bin/update-system
 
+# update setup script
+super + ctrl + u
+    ~/.local/bin/update-imba-script
+
+alt + ctrl + u
+    ~/.local/bin/update-imba-script
+
 # restart sxhkd
 super + shift + r
     pkill sxhkd; sxhkd &
@@ -1222,29 +1383,28 @@ screenchange-reload = true
 pseudo-transparency = true
 
 [colors]
-background = #D60B0F14
-surface = #EF151B23
-surface-alt = #F0262F3A
-foreground = #F6F7F9
-muted = #91A0AE
+background = #D80C1118
+surface = #EB131A23
+surface-alt = #F018212B
+foreground = #ECF2F8
+muted = #8EA0B2
 primary = #84D8C2
 secondary = #F3C782
 accent = #8FB9FF
 alert = #F49BB4
-border = #28323D
-shadow = #00000000
+border = #22303D
 
 [ui]
-width = 96%
-offset-x = 2%
-offset-y = 12
-height = 42
-radius = 18
-padding-left = 2
-padding-right = 2
-module-margin = 1
-font-main = JetBrainsMono Nerd Font:size=10;2
-font-emoji = Noto Color Emoji:size=10;1
+width = 98%
+offset-x = 1%
+offset-y = 8
+height = 34
+radius = 12
+padding-left = 1
+padding-right = 1
+module-margin = 0
+font-main = JetBrainsMono Nerd Font:size=9.5;2
+font-emoji = Noto Color Emoji:size=9;1
 modules-left = launcher bspwm
 modules-center = xwindow
 modules-right = ${POLYBAR_RIGHT_MODULES}
@@ -1259,12 +1419,15 @@ background = \${colors.background}
 foreground = \${colors.foreground}
 border-size = 1
 border-color = \${colors.border}
+line-size = 2
+line-color = \${colors.primary}
 padding-left = \${ui.padding-left}
 padding-right = \${ui.padding-right}
 module-margin = \${ui.module-margin}
 separator =
 wm-restack = bspwm
 enable-ipc = true
+fixed-center = true
 cursor-click = pointer
 cursor-scroll = ns-resize
 font-0 = \${ui.font-main}
@@ -1275,17 +1438,12 @@ modules-right = \${ui.modules-right}
 scroll-up = bspc desktop -f prev.local
 scroll-down = bspc desktop -f next.local
 
-[module/base]
-format-background = \${colors.surface}
-format-foreground = \${colors.foreground}
-format-padding = 2
-
 [module/launcher]
 type = custom/text
 content = 󰣇
-content-background = \${colors.surface}
+content-background = \${colors.surface-alt}
 content-foreground = \${colors.accent}
-content-padding = 2
+content-padding = 1
 click-left = ~/.local/bin/open-app-launcher
 click-right = ~/.local/bin/bar-context-menu
 
@@ -1305,9 +1463,9 @@ ws-icon-7 = 8;8
 ws-icon-8 = 9;9
 ws-icon-9 = 10;10
 format = <label-state>
-format-background = \${colors.surface-alt}
+format-background = \${colors.surface}
 format-foreground = \${colors.foreground}
-format-padding = 2
+format-padding = 1
 label-focused = %name%
 label-focused-background = \${colors.primary}
 label-focused-foreground = #0d1116
@@ -1315,7 +1473,7 @@ label-focused-padding = 1
 label-focused-margin = 1
 label-occupied = %name%
 label-occupied-background = transparent
-label-occupied-foreground = \${colors.foreground}
+label-occupied-foreground = \${colors.muted}
 label-occupied-padding = 1
 label-occupied-margin = 1
 label-empty =
@@ -1333,17 +1491,17 @@ label-urgent-margin = 1
 type = custom/script
 exec = ~/.config/polybar/scripts/current-desktop-status
 interval = 1
-format-background = \${colors.surface-alt}
+format-background = \${colors.surface}
 format-foreground = \${colors.secondary}
-format-padding = 2
+format-padding = 1
 click-right = ~/.local/bin/bar-context-menu
 
 [module/xwindow]
 type = internal/xwindow
 format-background = \${colors.surface-alt}
 format-foreground = \${colors.foreground}
-format-padding = 2
-label = %title:0:54:...%
+format-padding = 1
+label = %title:0:46:...%
 label-empty = workspace
 label-empty-foreground = \${colors.muted}
 click-right = ~/.local/bin/bar-context-menu
@@ -1354,7 +1512,7 @@ exec = ~/.config/polybar/scripts/updates-status
 interval = 600
 format-background = \${colors.surface}
 format-foreground = \${colors.accent}
-format-padding = 2
+format-padding = 1
 click-left = ~/.local/bin/update-system
 click-right = ~/.local/bin/bar-context-menu
 
@@ -1363,7 +1521,7 @@ type = internal/cpu
 interval = 2
 format-background = \${colors.surface}
 format-foreground = \${colors.foreground}
-format-padding = 2
+format-padding = 1
 label = 󰍛 %percentage%%
 
 [module/memory]
@@ -1371,19 +1529,21 @@ type = internal/memory
 interval = 5
 format-background = \${colors.surface}
 format-foreground = \${colors.foreground}
-format-padding = 2
+format-padding = 1
 label = 󰘚 %percentage_used%%
 
 [module/pulseaudio]
 type = internal/pulseaudio
+format-volume = <label-volume>
 format-volume-background = \${colors.surface}
 format-volume-foreground = \${colors.foreground}
-format-volume-padding = 2
+format-volume-padding = 1
+format-muted = <label-muted>
 format-muted-background = \${colors.surface}
 format-muted-foreground = \${colors.muted}
-format-muted-padding = 2
+format-muted-padding = 1
 label-volume = 󰕾 %percentage%%
-label-muted = 󰝟 mute
+label-muted = 󰝟
 click-right = pavucontrol
 
 [module/network]
@@ -1392,7 +1552,7 @@ exec = ~/.config/polybar/scripts/network-status
 interval = 5
 format-background = \${colors.surface}
 format-foreground = \${colors.foreground}
-format-padding = 2
+format-padding = 1
 click-left = ~/.local/bin/system-settings network
 click-right = nm-connection-editor
 
@@ -1402,7 +1562,7 @@ exec = ~/.config/polybar/scripts/bluetooth-status
 interval = 8
 format-background = \${colors.surface}
 format-foreground = \${colors.foreground}
-format-padding = 2
+format-padding = 1
 click-left = ~/.local/bin/system-settings bluetooth
 click-right = blueman-manager
 
@@ -1411,38 +1571,37 @@ type = internal/battery
 battery = ${BATTERY_NAME}
 adapter = ${AC_NAME}
 full-at = 99
-poll-interval = 5
+poll-interval = 10
 format-charging-background = \${colors.surface}
 format-charging-foreground = \${colors.foreground}
-format-charging-padding = 2
+format-charging-padding = 1
 format-discharging-background = \${colors.surface}
 format-discharging-foreground = \${colors.foreground}
-format-discharging-padding = 2
+format-discharging-padding = 1
 format-full-background = \${colors.surface}
 format-full-foreground = \${colors.foreground}
-format-full-padding = 2
-format-charging = 󰂄 <label-charging>
-format-discharging = <ramp-capacity> <label-discharging>
-format-full = 󰁹 <label-full>
+format-full-padding = 1
+format-charging = 󰂄 %percentage%%
+format-discharging = <ramp-capacity> %percentage%%
+format-full = 󰁹
 label-charging = %percentage%%
 label-discharging = %percentage%%
 label-full = 100%%
 ramp-capacity-0 = 󰂎
-ramp-capacity-1 = 󰁺
-ramp-capacity-2 = 󰁼
-ramp-capacity-3 = 󰁾
-ramp-capacity-4 = 󰂀
-ramp-capacity-5 = 󰁹
+ramp-capacity-1 = 󰁻
+ramp-capacity-2 = 󰁽
+ramp-capacity-3 = 󰁿
+ramp-capacity-4 = 󰂁
 
 [module/date]
 type = internal/date
 interval = 5
-date = %a %d %b
+date = %a %d
 time = %H:%M
 format-background = \${colors.surface}
 format-foreground = \${colors.foreground}
-format-padding = 2
-label = 󰃭 %time%  %date%
+format-padding = 1
+label = 󰥔 %time% · %date%
 click-right = ~/.local/bin/bar-context-menu
 
 [module/control]
@@ -1450,16 +1609,16 @@ type = custom/text
 content = 󰒓
 content-background = \${colors.surface}
 content-foreground = \${colors.secondary}
-content-padding = 2
+content-padding = 1
 click-left = ~/.local/bin/control-center
 click-right = ~/.local/bin/bar-context-menu
 
 [module/power]
 type = custom/text
 content = 󰐥
-content-background = \${colors.surface}
+content-background = \${colors.surface-alt}
 content-foreground = \${colors.alert}
-content-padding = 2
+content-padding = 1
 click-left = ~/.local/bin/power-menu
 click-right = ~/.local/bin/lock-screen
 
@@ -1468,8 +1627,8 @@ type = internal/tray
 format-background = \${colors.surface}
 format-foreground = \${colors.foreground}
 format-padding = 1
-tray-spacing = 8
-tray-size = 65%
+tray-spacing = 6
+tray-size = 58%
 
 include-file = ~/.config/polybar/user.ini
 EOF
@@ -1790,7 +1949,7 @@ entry {
 
 listview {
   columns: 1;
-  lines: 6;
+  lines: 8;
   spacing: 10px;
   cycle: false;
   scrollbar: false;
@@ -2005,14 +2164,17 @@ print_next_steps() {
   echo "4. Доступ к приватным файлам:"
   echo "   ~/.local/bin/arch-access"
   echo
-  echo "5. Кастомизация bar без ломки core:"
+  echo "5. Обновление самого setup-скрипта:"
+  echo "   ~/.local/bin/update-imba-script"
+  echo
+  echo "6. Кастомизация bar без ломки core:"
   echo "   ~/.config/polybar/user.ini"
   echo "   ~/.local/bin/polybar-preset"
   echo
-  echo "6. Перезагрузи систему:"
+  echo "7. Перезагрузи систему:"
   echo "   sudo reboot"
   echo
-  echo "7. Главные хоткеи:"
+  echo "8. Главные хоткеи:"
   echo "   Alt+Return         -> терминал в тайлинге"
   echo "   Alt+Shift+Return   -> ещё один терминал"
   echo "   Alt+d              -> App Deck / выбор приложений"
@@ -2025,10 +2187,11 @@ print_next_steps() {
   echo "   Alt+q              -> закрыть окно"
   echo "   Alt+Ctrl+b         -> перезапуск bar"
   echo "   Alt+Ctrl+a         -> arch-access (приватные файлы)"
+  echo "   Alt+Ctrl+u         -> обновить setup-скрипт"
   echo "   Alt+Shift+l        -> lock screen с логином/паролем"
   echo "   Alt+Shift+u        -> обновление системы"
   echo
-  echo "Верхняя панель по умолчанию сбалансирована для работы: звук, сеть, Bluetooth, дата, трей и быстрые действия."
+  echo "Верхняя панель теперь минималистичная, но информативная: звук, сеть, Bluetooth, дата, обновления и быстрые действия."
   echo "Через ~/.local/bin/polybar-preset можно моментально включить monitoring-профиль с CPU/RAM."
   echo "Правый клик по ключевым модулям bar открывает новое контекстное меню."
   echo "Сессия теперь поднимается через LightDM: есть greeter, поля логина/пароля и аватар пользователя."
@@ -2049,10 +2212,12 @@ main() {
   enable_services
 
   info "Генерация helper-скриптов и конфигов"
+  write_script_source_marker
   write_lock_screen
   write_dropdown_terminal
   write_launch_polybar_script
   write_update_script
+  write_self_update_script
   write_launcher_script
   write_arch_access_script
   write_bar_context_menu_script
