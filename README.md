@@ -36,6 +36,7 @@ sudo reboot
 - при открытии интерактивного терминала будет показываться `fastfetch`
 - `ssh-agent` будет подниматься как user-service для текущей учётки
 - bar можно тюнить через `~/.config/polybar/user.ini`, затем применить `Alt+Shift+b`
+- bar включается по умолчанию (автостарт в `bspwm`) и поднимается сразу после установки, если ты уже в GUI
 
 Все основные бинды продублированы и на `Super`.
 
@@ -51,6 +52,7 @@ sudo reboot
 - `Alt+b` или `Super+b` -> Firefox
 - `Alt+e` или `Super+e` -> Thunar
 - `Alt+q` или `Super+q` -> закрыть окно
+- `Alt+Ctrl+b` или `Super+Ctrl+b` -> перезапуск `polybar`
 - `Alt+Shift+u` или `Super+Shift+u` -> обновление системы
 
 ## Аватар для блокировки
@@ -96,6 +98,12 @@ sudo reboot
 ```
 
 После изменений нажми `Alt+Shift+b`, чтобы перезапустить `bspwm` и применить новый bar.
+
+Если bar не появился, проверь лог:
+
+```text
+~/.cache/polybar/main.log
+```
 
 ## Обои
 

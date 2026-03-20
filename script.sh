@@ -125,6 +125,7 @@ BACKUP_TARGETS=(
   "${LOCAL_BIN}/app-settings"
   "${LOCAL_BIN}/control-center"
   "${LOCAL_BIN}/dropdown-terminal"
+  "${LOCAL_BIN}/launch-polybar"
   "${LOCAL_BIN}/lock-screen"
   "${LOCAL_BIN}/open-app-launcher"
   "${LOCAL_BIN}/power-menu"
@@ -207,6 +208,34 @@ exec alacritty
 EOF
 
   chmod +x "${LOCAL_BIN}/dropdown-terminal"
+}
+
+write_launch_polybar_script() {
+  cat > "${LOCAL_BIN}/launch-polybar" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+log_dir="${HOME}/.cache/polybar"
+log_file="${log_dir}/main.log"
+config_file="${HOME}/.config/polybar/config.ini"
+
+mkdir -p "${log_dir}"
+
+if ! command -v polybar >/dev/null 2>&1; then
+  printf '[%s] polybar command not found\n' "$(date +'%F %T')" >> "${log_file}"
+  exit 1
+fi
+
+if [[ ! -f "${config_file}" ]]; then
+  printf '[%s] config not found: %s\n' "$(date +'%F %T')" "${config_file}" >> "${log_file}"
+  exit 1
+fi
+
+pkill polybar >/dev/null 2>&1 || true
+polybar main -c "${config_file}" >> "${log_file}" 2>&1 &
+EOF
+
+  chmod +x "${LOCAL_BIN}/launch-polybar"
 }
 
 write_update_script() {
@@ -842,8 +871,7 @@ pgrep -x picom >/dev/null || picom --config "$HOME/.config/picom/picom.conf" &
 pgrep -x dunst >/dev/null || dunst &
 pgrep -x light-locker >/dev/null || light-locker --lock-on-suspend --no-late-locking &
 
-pkill polybar >/dev/null 2>&1 || true
-polybar main >/tmp/polybar-main.log 2>&1 &
+"$HOME/.local/bin/launch-polybar"
 
 xsetroot -cursor_name left_ptr
 xset s 300 300
@@ -979,6 +1007,13 @@ super + shift + b
 
 alt + shift + b
     bspc wm -r
+
+# restart polybar
+super + ctrl + b
+    ~/.local/bin/launch-polybar
+
+alt + ctrl + b
+    ~/.local/bin/launch-polybar
 
 # desktops
 super + {1-9,0}
@@ -1794,6 +1829,21 @@ fix_permissions() {
     "${USER_HOME}/.xprofile"
 }
 
+start_polybar_now() {
+  info "Автозапуск bar по умолчанию"
+
+  if [[ -z "${DISPLAY:-}" ]]; then
+    warn "DISPLAY не найден. Bar запустится автоматически при входе в сессию bspwm."
+    return
+  fi
+
+  if "${LOCAL_BIN}/launch-polybar"; then
+    done_msg "Bar запущен."
+  else
+    warn "Не удалось запустить bar сразу. Проверь ~/.cache/polybar/main.log."
+  fi
+}
+
 print_next_steps() {
   echo
   printf "%sГотово.%s Рабочий стол теперь будет выглядеть заметно богаче.\n" "${ANSI_DONE}" "${ANSI_RESET}"
@@ -1826,6 +1876,7 @@ print_next_steps() {
   echo "   Alt+b              -> Firefox"
   echo "   Alt+e              -> Thunar"
   echo "   Alt+q              -> закрыть окно"
+  echo "   Alt+Ctrl+b         -> перезапуск bar"
   echo "   Alt+Shift+l        -> lock screen с логином/паролем"
   echo "   Alt+Shift+u        -> обновление системы"
   echo
@@ -1833,6 +1884,7 @@ print_next_steps() {
   echo "Через ~/.local/bin/polybar-preset можно моментально включить monitoring-профиль с CPU/RAM."
   echo "Сессия теперь поднимается через LightDM: есть greeter, поля логина/пароля и аватар пользователя."
   echo "Столы в баре ужаты до цифр, а активный рабочий стол вынесен отдельным индикатором справа."
+  echo "Если bar не поднялся, смотри лог: ~/.cache/polybar/main.log"
 }
 
 main() {
@@ -1850,6 +1902,7 @@ main() {
   info "Генерация helper-скриптов и конфигов"
   write_lock_screen
   write_dropdown_terminal
+  write_launch_polybar_script
   write_update_script
   write_launcher_script
   write_control_center_script
@@ -1895,6 +1948,8 @@ main() {
   info "Права владельца"
   fix_permissions
   done_msg "Владельцы файлов выровнены."
+
+  start_polybar_now
 
   print_next_steps
 }
