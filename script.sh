@@ -167,7 +167,6 @@ enable_services() {
   info "Включение системных сервисов"
   sudo systemctl enable NetworkManager
   sudo systemctl enable bluetooth
-  sudo systemctl enable wireplumber
   done_msg "Сервисы активированы."
 }
 
