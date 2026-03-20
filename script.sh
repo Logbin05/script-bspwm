@@ -117,6 +117,7 @@ BACKUP_TARGETS=(
   "${CONFIG_DIR}/gtk-4.0/settings.ini"
   "${CONFIG_DIR}/picom/picom.conf"
   "${CONFIG_DIR}/polybar/config.ini"
+  "${CONFIG_DIR}/polybar/fallback.ini"
   "${CONFIG_DIR}/polybar/user.ini"
   "${CONFIG_DIR}/polybar/scripts/network-status"
   "${CONFIG_DIR}/polybar/scripts/bluetooth-status"
@@ -227,21 +228,67 @@ set -euo pipefail
 log_dir="${HOME}/.cache/polybar"
 log_file="${log_dir}/main.log"
 config_file="${HOME}/.config/polybar/config.ini"
+fallback_file="${HOME}/.config/polybar/fallback.ini"
 
 mkdir -p "${log_dir}"
 
+notify_msg() {
+  local title="$1"
+  local body="$2"
+  if command -v notify-send >/dev/null 2>&1 && [[ -n "${DISPLAY:-}" ]]; then
+    notify-send "${title}" "${body}"
+  fi
+}
+
+start_bar() {
+  local cfg="$1"
+  local tag="$2"
+  local pid=""
+
+  if [[ ! -f "${cfg}" ]]; then
+    printf '[%s] %s config not found: %s\n' "$(date +'%F %T')" "${tag}" "${cfg}" >> "${log_file}"
+    return 1
+  fi
+
+  printf '[%s] trying %s config: %s\n' "$(date +'%F %T')" "${tag}" "${cfg}" >> "${log_file}"
+  polybar -q main -c "${cfg}" >> "${log_file}" 2>&1 &
+  pid=$!
+  sleep 1
+
+  if kill -0 "${pid}" >/dev/null 2>&1; then
+    printf '[%s] polybar started (%s), pid=%s\n' "$(date +'%F %T')" "${tag}" "${pid}" >> "${log_file}"
+    return 0
+  fi
+
+  printf '[%s] polybar failed to start (%s)\n' "$(date +'%F %T')" "${tag}" >> "${log_file}"
+  return 1
+}
+
 if ! command -v polybar >/dev/null 2>&1; then
   printf '[%s] polybar command not found\n' "$(date +'%F %T')" >> "${log_file}"
+  notify_msg "Polybar missing" "Команда polybar не найдена."
   exit 1
 fi
 
-if [[ ! -f "${config_file}" ]]; then
-  printf '[%s] config not found: %s\n' "$(date +'%F %T')" "${config_file}" >> "${log_file}"
-  exit 1
+if [[ -z "${DISPLAY:-}" ]]; then
+  printf '[%s] DISPLAY is empty, skip launch\n' "$(date +'%F %T')" >> "${log_file}"
+  exit 0
 fi
 
-pkill polybar >/dev/null 2>&1 || true
-polybar main -c "${config_file}" >> "${log_file}" 2>&1 &
+printf '\n[%s] launch request\n' "$(date +'%F %T')" >> "${log_file}"
+pkill -x polybar >/dev/null 2>&1 || true
+
+if start_bar "${config_file}" "main"; then
+  exit 0
+fi
+
+if start_bar "${fallback_file}" "fallback"; then
+  notify_msg "Polybar fallback" "Основной конфиг не стартовал, запущен fallback."
+  exit 0
+fi
+
+notify_msg "Polybar failed" "Не удалось запустить bar. Лог: ~/.cache/polybar/main.log"
+exit 1
 EOF
 
   chmod +x "${LOCAL_BIN}/launch-polybar"
@@ -1063,6 +1110,81 @@ time = %H:%M
 
 ; Быстрый выбор профиля без ручной правки:
 ; ~/.local/bin/polybar-preset
+EOF
+}
+
+write_polybar_fallback_config() {
+  cat > "${CONFIG_DIR}/polybar/fallback.ini" <<'EOF'
+[bar/main]
+width = 100%
+height = 30
+background = #101418
+foreground = #F5F7FA
+border-size = 0
+padding-left = 1
+padding-right = 1
+module-margin = 1
+font-0 = JetBrainsMono Nerd Font:size=10;2
+font-1 = Noto Color Emoji:size=10;1
+modules-left = launcher bspwm
+modules-center = xwindow
+modules-right = pulseaudio date power
+wm-restack = bspwm
+enable-ipc = true
+cursor-click = pointer
+cursor-scroll = ns-resize
+
+[module/launcher]
+type = custom/text
+content = 󰣇
+content-padding = 1
+content-foreground = #8FB9FF
+click-left = ~/.local/bin/open-app-launcher
+
+[module/bspwm]
+type = internal/bspwm
+pin-workspaces = true
+enable-click = true
+enable-scroll = false
+label-focused = %name%
+label-focused-background = #84D8C2
+label-focused-foreground = #101418
+label-focused-padding = 1
+label-occupied = %name%
+label-occupied-padding = 1
+label-empty =
+label-urgent = %name%
+label-urgent-padding = 1
+
+[module/xwindow]
+type = internal/xwindow
+label = %title:0:52:...%
+label-empty = workspace
+
+[module/pulseaudio]
+type = internal/pulseaudio
+format-volume = <label-volume>
+format-volume-padding = 1
+format-muted = <label-muted>
+format-muted-padding = 1
+label-volume = 󰕾 %percentage%%
+label-muted = 󰝟
+click-right = pavucontrol
+
+[module/date]
+type = internal/date
+interval = 5
+date = %a %d
+time = %H:%M
+label = 󰥔 %time% · %date%
+format-padding = 1
+
+[module/power]
+type = custom/text
+content = 󰐥
+content-padding = 1
+content-foreground = #F49BB4
+click-left = ~/.local/bin/power-menu
 EOF
 }
 
@@ -2197,6 +2319,7 @@ print_next_steps() {
   echo "Сессия теперь поднимается через LightDM: есть greeter, поля логина/пароля и аватар пользователя."
   echo "Столы в баре ужаты до цифр, а активный рабочий стол вынесен отдельным индикатором справа."
   echo "Если bar не поднялся, смотри лог: ~/.cache/polybar/main.log"
+  echo "Если основной config сломан, launch-polybar автоматически включит fallback: ~/.config/polybar/fallback.ini"
 }
 
 main() {
@@ -2230,6 +2353,7 @@ main() {
   write_system_settings_script
   write_polybar_scripts
   write_polybar_user_config
+  write_polybar_fallback_config
   write_bspwm_config
   write_sxhkd_config
   write_polybar_config

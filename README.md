@@ -151,6 +151,8 @@ sudo reboot
 ~/.cache/polybar/main.log
 ```
 
+`launch-polybar` теперь сначала пробует основной конфиг, а если он не стартует, автоматически поднимает `~/.config/polybar/fallback.ini`.
+
 ## Обои
 
 Положи свои обои сюда:
