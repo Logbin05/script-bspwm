@@ -1,24 +1,56 @@
-# Как запускать:
+# Imba bspwm setup
+
+Скрипт `script.sh` поднимает аккуратный `bspwm`-desktop с цельным визуальным стилем:
+
+- glass-like `polybar` с рабочими столами, названием активного окна, обновлениями, CPU, RAM, звуком, Wi-Fi, Bluetooth, батареей и временем
+- `App Deck` для выбора приложений через красивую сетку `rofi`
+- `quick hub`, отдельные окна настроек приложений и системных настроек
+- мягкие fade/blur/shadow-эффекты через `picom`
+- прозрачный `Alacritty`, тёмные уведомления `dunst`, минималистичные иконки и единая палитра
+
+## Запуск
+
+Запускай от обычного пользователя, не от `root`.
 
 ```bash
-chmod +x setup_imba_bspwm.sh
-./setup_imba_bspwm.sh
+chmod +x script.sh
+./script.sh
 sudo reboot
 ```
 
-Что получится после ребута:
+## Что будет после ребута
 
-* система автоматически залогинится в `tty1`
-* `startx` поднимет `bspwm`
-* сверху будет панель `polybar`
-* в трее появятся **Wi-Fi** и **Bluetooth**
-* будет **прозрачный терминал**
-* можно поставить **свои обои**
-* при открытии терминала будет показываться **fastfetch**
-* `Alt+Shift+L` будет блокировать экран через `i3lock`, а `xss-lock` будет вызывать локер и на DPMS/suspend-событиях. ([Arch Linux][3])
+- система автоматически залогинится в `tty1`
+- `startx` поднимет `bspwm`
+- сверху появится информативный хедбар
+- `Alt+d` откроет `App Deck`
+- `Alt+c` откроет `quick hub`
+- `Alt+s` откроет системные настройки
+- `Alt+,` откроет настройки приложений
+- `Alt+Shift+p` откроет power menu
+- `Alt+Shift+l` заблокирует экран через `i3lock`
+- при открытии интерактивного терминала будет показываться `fastfetch`
 
-Если хочешь, следующим сообщением я сделаю тебе **вторую версию этого же скрипта в стиле Catppuccin**, с более дорогими цветами, power menu и красивым shutdown/reboot/lock launcher.
+Все основные бинды продублированы и на `Super`.
 
-[1]: https://archlinux.org/packages/extra/x86_64/polybar/?utm_source=chatgpt.com "polybar 3.7.2-2 (x86_64)"
-[2]: https://wiki.archlinux.org/title/Getty?utm_source=chatgpt.com "getty - ArchWiki"
-[3]: https://archlinux.org/packages/extra/x86_64/network-manager-applet/?utm_source=chatgpt.com "network-manager-applet 1.36.0-1 (x86_64)"
+## Главные хоткеи
+
+- `Alt+Return` или `Super+Return` -> dropdown-терминал
+- `Alt+Shift+Return` или `Super+Shift+Return` -> обычный терминал
+- `Alt+d` или `Super+d` -> выбор приложений
+- `Alt+c` или `Super+c` -> quick hub
+- `Alt+s` или `Super+s` -> системные настройки
+- `Alt+,` или `Super+,` -> настройки приложений
+- `Alt+Shift+p` или `Super+Shift+p` -> питание
+- `Alt+b` или `Super+b` -> Firefox
+- `Alt+e` или `Super+e` -> Thunar
+- `Alt+q` или `Super+q` -> закрыть окно
+- `Alt+Shift+u` или `Super+Shift+u` -> обновление системы
+
+## Обои
+
+Положи свои обои сюда:
+
+```text
+~/Pictures/Wallpapers/wallpaper.jpg
+```
