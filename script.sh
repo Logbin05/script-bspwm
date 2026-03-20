@@ -9,6 +9,7 @@ fi
 USER_NAME="${SUDO_USER:-$USER}"
 USER_HOME="$(getent passwd "$USER_NAME" | cut -d: -f6)"
 CONFIG_DIR="${USER_HOME}/.config"
+LOCAL_BIN="${USER_HOME}/.local/bin"
 WALL_DIR="${USER_HOME}/Pictures/Wallpapers"
 WALLPAPER="${WALL_DIR}/wallpaper.jpg"
 
@@ -27,6 +28,8 @@ PACKAGES=(
   sxhkd
   xorg-server
   xorg-xinit
+  xorg-xrandr
+  xorg-xsetroot
   alacritty
   picom
   feh
@@ -43,11 +46,16 @@ PACKAGES=(
   i3lock
   xss-lock
   pavucontrol
+  pipewire
+  pipewire-pulse
+  wireplumber
   fastfetch
+  xdotool
+  lxappearance
+  papirus-icon-theme
   ttf-jetbrains-mono-nerd
   noto-fonts
   noto-fonts-emoji
-  papirus-icon-theme
   dbus
 )
 
@@ -62,12 +70,13 @@ backup_if_exists() {
   fi
 }
 
-info "Установка пакетов"
+info "Обновление системы и установка пакетов"
 sudo pacman -Syu --needed --noconfirm "${PACKAGES[@]}"
 
-info "Включение сервисов"
+info "Включение системных сервисов"
 sudo systemctl enable NetworkManager
 sudo systemctl enable bluetooth
+sudo systemctl enable wireplumber
 
 info "Создание директорий"
 mkdir -p \
@@ -78,10 +87,10 @@ mkdir -p \
   "${CONFIG_DIR}/dunst" \
   "${CONFIG_DIR}/picom" \
   "${CONFIG_DIR}/alacritty" \
-  "${WALL_DIR}" \
-  "${USER_HOME}/.local/bin"
+  "${LOCAL_BIN}" \
+  "${WALL_DIR}"
 
-info "Бэкапы конфигов"
+info "Бэкап старых конфигов"
 backup_if_exists "${CONFIG_DIR}/bspwm/bspwmrc"
 backup_if_exists "${CONFIG_DIR}/sxhkd/sxhkdrc"
 backup_if_exists "${CONFIG_DIR}/polybar/config.ini"
@@ -92,36 +101,71 @@ backup_if_exists "${CONFIG_DIR}/alacritty/alacritty.toml"
 backup_if_exists "${USER_HOME}/.xinitrc"
 backup_if_exists "${USER_HOME}/.bash_profile"
 backup_if_exists "${USER_HOME}/.bashrc"
+backup_if_exists "${USER_HOME}/.xprofile"
 
 info "Скрипт блокировки экрана"
-cat > "${USER_HOME}/.local/bin/lock-screen" <<'EOF'
+cat > "${LOCAL_BIN}/lock-screen" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 exec i3lock -n -c 0f111a
 EOF
-chmod +x "${USER_HOME}/.local/bin/lock-screen"
+chmod +x "${LOCAL_BIN}/lock-screen"
+
+info "Скрипт dropdown-терминала"
+cat > "${LOCAL_BIN}/dropdown-terminal" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+alacritty --class dropdown &
+sleep 0.45
+
+wid="$(xdotool search --sync --onlyvisible --class dropdown | tail -n 1)"
+screen="$(xrandr | awk '/\*/ {print $1; exit}')"
+
+sw="${screen%x*}"
+sh="${screen#*x}"
+
+ww=$(( sw * 78 / 100 ))
+wh=$(( sh * 72 / 100 ))
+wx=$(( (sw - ww) / 2 ))
+wy=36
+
+xdotool windowsize "$wid" "$ww" "$wh"
+xdotool windowmove "$wid" "$wx" "$wy"
+EOF
+chmod +x "${LOCAL_BIN}/dropdown-terminal"
+
+info "Скрипт обновления системы"
+cat > "${LOCAL_BIN}/update-system" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+exec alacritty -e bash -lc 'sudo pacman -Syu; echo; read -n 1 -s -r -p "Нажми любую клавишу для закрытия..."'
+EOF
+chmod +x "${LOCAL_BIN}/update-system"
 
 info "Конфиг bspwm"
-cat > "${CONFIG_DIR}/bspwm/bspwmrc" <<EOF
+cat > "${CONFIG_DIR}/bspwm/bspwmrc" <<'EOF'
 #!/bin/sh
 
 pgrep -x sxhkd >/dev/null || sxhkd &
-pgrep -x picom >/dev/null || picom --config "\$HOME/.config/picom/picom.conf" &
+pgrep -x picom >/dev/null || picom --config "$HOME/.config/picom/picom.conf" &
 pgrep -x dunst >/dev/null || dunst &
 pgrep -x nm-applet >/dev/null || nm-applet &
 pgrep -x blueman-applet >/dev/null || blueman-applet &
-pgrep -x xss-lock >/dev/null || xss-lock --transfer-sleep-lock -- "\$HOME/.local/bin/lock-screen" &
+pgrep -x xss-lock >/dev/null || xss-lock --transfer-sleep-lock -- "$HOME/.local/bin/lock-screen" &
 pkill polybar >/dev/null 2>&1 || true
 polybar main &
 
-if [ -f "\$HOME/Pictures/Wallpapers/wallpaper.jpg" ]; then
-  feh --bg-fill "\$HOME/Pictures/Wallpapers/wallpaper.jpg"
+xsetroot -cursor_name left_ptr
+
+if [ -f "$HOME/Pictures/Wallpapers/wallpaper.jpg" ]; then
+  feh --bg-fill "$HOME/Pictures/Wallpapers/wallpaper.jpg"
 fi
 
 bspc monitor -d I II III IV V VI VII VIII IX X
 
 bspc config border_width 2
-bspc config window_gap 12
+bspc config window_gap 14
 bspc config split_ratio 0.52
 bspc config borderless_monocle true
 bspc config gapless_monocle true
@@ -131,16 +175,26 @@ bspc config focused_border_color "#89B4FA"
 bspc config normal_border_color "#313244"
 bspc config active_border_color "#74C7EC"
 bspc config presel_feedback_color "#F38BA8"
+
+# dropdown terminal
+bspc rule -a dropdown state=floating sticky=on center=on
 EOF
 chmod +x "${CONFIG_DIR}/bspwm/bspwmrc"
 
 info "Конфиг sxhkd"
 cat > "${CONFIG_DIR}/sxhkd/sxhkdrc" <<'EOF'
-# terminal
+# dropdown terminal
 super + Return
-    alacritty
+    ~/.local/bin/dropdown-terminal
 
 alt + Return
+    ~/.local/bin/dropdown-terminal
+
+# normal terminal
+super + shift + Return
+    alacritty
+
+alt + shift + Return
     alacritty
 
 # app launcher
@@ -177,6 +231,13 @@ super + shift + l
 
 alt + shift + l
     ~/.local/bin/lock-screen
+
+# update system
+super + shift + u
+    ~/.local/bin/update-system
+
+alt + shift + u
+    ~/.local/bin/update-system
 
 # restart sxhkd
 super + shift + r
@@ -253,7 +314,7 @@ EOF
 info "Конфиг polybar"
 cat > "${CONFIG_DIR}/polybar/config.ini" <<EOF
 [colors]
-background = #CC0F111A
+background = #D90F111A
 background-alt = #1A1D29
 foreground = #E6E9EF
 primary = #89B4FA
@@ -263,38 +324,40 @@ urgent = #F38BA8
 muted = #6C7086
 
 [bar/main]
-width = 100%
+width = 96%
+offset-x = 2%
+offset-y = 8
 height = 34
-radius = 0
+radius = 14
 background = \${colors.background}
 foreground = \${colors.foreground}
+border-size = 1
+border-color = #2A2D3A
 padding-left = 2
 padding-right = 2
 module-margin = 2
-font-0 = JetBrainsMono Nerd Font:size=11;2
-font-1 = Noto Color Emoji:size=11;1
+font-0 = JetBrainsMono Nerd Font:size=10;2
+font-1 = Noto Color Emoji:size=10;1
 modules-left = bspwm
-modules-center = date
+modules-center = xwindow
 modules-right = battery pulseaudio tray
 enable-ipc = true
 
 [module/bspwm]
 type = internal/bspwm
-label-focused = %name%
+label-focused = 󰮯 %name%
 label-focused-background = \${colors.primary}
 label-focused-foreground = #11111b
 label-focused-padding = 2
-label-occupied = %name%
+label-occupied = 󰊠 %name%
 label-occupied-padding = 2
-label-empty = %name%
+label-empty = 󰧟 %name%
 label-empty-foreground = \${colors.muted}
 label-empty-padding = 2
 
-[module/date]
-type = internal/date
-interval = 1
-date = %H:%M  %d.%m.%Y
-label = %date%
+[module/xwindow]
+type = internal/xwindow
+label = %title:0:55:...%
 
 [module/battery]
 type = internal/battery
@@ -302,9 +365,9 @@ battery = ${BATTERY_NAME}
 adapter = ${AC_NAME}
 full-at = 99
 poll-interval = 5
-format-charging = 󰂄 <label-charging>
-format-discharging = 󰁹 <label-discharging>
-format-full = 󰂄 <label-full>
+format-charging =   <label-charging>
+format-discharging =   <label-discharging>
+format-full =   <label-full>
 label-charging = %percentage%%
 label-discharging = %percentage%%
 label-full = 100%%
@@ -323,14 +386,15 @@ EOF
 info "Конфиг alacritty"
 cat > "${CONFIG_DIR}/alacritty/alacritty.toml" <<'EOF'
 [window]
-opacity = 0.88
-padding = { x = 12, y = 12 }
+opacity = 0.84
+padding = { x = 10, y = 10 }
+decorations = "None"
 
 [font]
 normal = { family = "JetBrainsMono Nerd Font", style = "Regular" }
 bold = { family = "JetBrainsMono Nerd Font", style = "Bold" }
 italic = { family = "JetBrainsMono Nerd Font", style = "Italic" }
-size = 11.5
+size = 10.0
 
 [colors.primary]
 background = "#0F111A"
@@ -367,27 +431,28 @@ backend = "glx";
 vsync = true;
 
 shadow = true;
-shadow-radius = 18;
-shadow-opacity = 0.30;
-shadow-offset-x = -10;
-shadow-offset-y = -10;
+shadow-radius = 20;
+shadow-opacity = 0.28;
+shadow-offset-x = -12;
+shadow-offset-y = -12;
 
-corner-radius = 12;
-round-borders = 10;
+corner-radius = 14;
+round-borders = 12;
 
 fading = true;
 fade-in-step = 0.04;
 fade-out-step = 0.04;
 
-inactive-opacity = 0.95;
+inactive-opacity = 0.94;
 active-opacity = 1.0;
 frame-opacity = 1.0;
 
 blur-method = "dual_kawase";
-blur-strength = 5;
+blur-strength = 6;
 
 opacity-rule = [
-  "88:class_g = 'Alacritty'",
+  "84:class_g = 'Alacritty'",
+  "90:class_g = 'dropdown'",
   "92:class_g = 'Rofi'"
 ];
 EOF
@@ -472,6 +537,12 @@ element selected {
 }
 EOF
 
+info "X profile"
+cat > "${USER_HOME}/.xprofile" <<'EOF'
+export GTK_THEME=Adwaita:dark
+export XCURSOR_SIZE=24
+EOF
+
 info "Автозапуск X и автоперезапуск bspwm"
 cat > "${USER_HOME}/.xinitrc" <<'EOF'
 #!/bin/sh
@@ -484,7 +555,6 @@ EOF
 chmod +x "${USER_HOME}/.xinitrc"
 
 cat > "${USER_HOME}/.bash_profile" <<'EOF'
-# autostart X on tty1
 if [[ -z "${DISPLAY:-}" ]] && [[ "${XDG_VTNR:-0}" -eq 1 ]]; then
   exec startx
 fi
@@ -498,11 +568,13 @@ ExecStart=
 ExecStart=-/sbin/agetty --autologin ${USER_NAME} --noclear %I \$TERM
 EOF
 
+info "Обновление systemd конфигурации"
+sudo systemctl daemon-reload
+
 info "fastfetch в bashrc"
 if ! grep -q "fastfetch" "${USER_HOME}/.bashrc" 2>/dev/null; then
   cat >> "${USER_HOME}/.bashrc" <<'EOF'
 
-# system info
 if command -v fastfetch >/dev/null 2>&1; then
   fastfetch
 fi
@@ -510,7 +582,14 @@ EOF
 fi
 
 info "Права владельца"
-sudo chown -R "${USER_NAME}:${USER_NAME}" "${CONFIG_DIR}" "${USER_HOME}/.local" "${WALL_DIR}" "${USER_HOME}/.xinitrc" "${USER_HOME}/.bash_profile" "${USER_HOME}/.bashrc"
+sudo chown -R "${USER_NAME}:${USER_NAME}" \
+  "${CONFIG_DIR}" \
+  "${USER_HOME}/.local" \
+  "${WALL_DIR}" \
+  "${USER_HOME}/.xinitrc" \
+  "${USER_HOME}/.bash_profile" \
+  "${USER_HOME}/.bashrc" \
+  "${USER_HOME}/.xprofile"
 
 info "Готово"
 echo
@@ -522,12 +601,14 @@ echo "2. Перезагрузи систему:"
 echo "   sudo reboot"
 echo
 echo "3. Основные хоткеи:"
-echo "   Alt+Return      -> терминал"
-echo "   Alt+d           -> меню приложений"
-echo "   Alt+b           -> Firefox"
-echo "   Alt+e           -> Thunar"
-echo "   Alt+q           -> закрыть окно"
-echo "   Alt+Shift+l     -> блокировка экрана"
+echo "   Alt+Return         -> dropdown-терминал сверху"
+echo "   Alt+Shift+Return   -> обычный терминал"
+echo "   Alt+d              -> меню приложений"
+echo "   Alt+b              -> Firefox"
+echo "   Alt+e              -> Thunar"
+echo "   Alt+q              -> закрыть окно"
+echo "   Alt+Shift+l        -> блокировка экрана"
+echo "   Alt+Shift+u        -> обновление системы"
 echo
 echo "Обычный выход из bspwm хоткеями отключён."
 echo "Аварийный доступ оставлен через Ctrl+Alt+F2."
