@@ -80,7 +80,7 @@ PACKAGES=(
   feh
   firefox
   git
-  i3lock-color
+  i3lock
   imagemagick
   libnotify
   light-locker
@@ -126,6 +126,7 @@ BACKUP_TARGETS=(
   "${CONFIG_DIR}/polybar/config.ini"
   "${CONFIG_DIR}/polybar/fallback.ini"
   "${CONFIG_DIR}/polybar/features.ini"
+  "${CONFIG_DIR}/polybar/user.active.ini"
   "${CONFIG_DIR}/polybar/user.ini"
   "${CONFIG_DIR}/polybar/scripts/network-status"
   "${CONFIG_DIR}/polybar/scripts/network-icon"
@@ -151,6 +152,7 @@ BACKUP_TARGETS=(
   "${LOCAL_BIN}/lock-screen"
   "${LOCAL_BIN}/open-app-launcher"
   "${LOCAL_BIN}/power-menu"
+  "${LOCAL_BIN}/polybar-prepare"
   "${LOCAL_BIN}/polybar-refresh"
   "${LOCAL_BIN}/polybar-preset"
   "${LOCAL_BIN}/bind-ssh-key"
@@ -361,6 +363,7 @@ log_dir="${HOME}/.cache/polybar"
 log_file="${log_dir}/main.log"
 config_file="${HOME}/.config/polybar/config.ini"
 fallback_file="${HOME}/.config/polybar/fallback.ini"
+prepare_script="${HOME}/.local/bin/polybar-prepare"
 
 mkdir -p "${log_dir}"
 
@@ -443,6 +446,10 @@ fi
 
 printf '\n[%s] launch request\n' "$(date +'%F %T')" >> "${log_file}"
 pkill -x polybar >/dev/null 2>&1 || true
+
+if [[ -x "${prepare_script}" ]]; then
+  "${prepare_script}" >> "${log_file}" 2>&1 || true
+fi
 
 if start_bar_group "${config_file}" "main"; then
   exit 0
@@ -816,6 +823,57 @@ show_power=true
 EOF
 }
 
+write_polybar_prepare_script() {
+  cat > "${LOCAL_BIN}/polybar-prepare" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+user_file="${HOME}/.config/polybar/user.ini"
+active_file="${HOME}/.config/polybar/user.active.ini"
+
+mkdir -p "${HOME}/.config/polybar"
+touch "${user_file}"
+
+awk '
+{
+  lines[NR] = $0
+
+  if (match($0, /^[[:space:]]*\[[^]]+\][[:space:]]*$/)) {
+    section = $0
+    gsub(/^[[:space:]]*\[/, "", section)
+    gsub(/\][[:space:]]*$/, "", section)
+    section = tolower(section)
+    next
+  }
+
+  if (match($0, /^[[:space:]]*[A-Za-z0-9._-]+[[:space:]]*=/)) {
+    key = $0
+    sub(/^[[:space:]]*/, "", key)
+    sub(/[[:space:]]*=.*/, "", key)
+    key = tolower(key)
+
+    idx = section SUBSEP key
+    last[idx] = NR
+    is_key[NR] = 1
+    key_idx[NR] = idx
+  }
+}
+END {
+  for (i = 1; i <= NR; i++) {
+    if (is_key[i] == 1 && last[key_idx[i]] != i) {
+      continue
+    }
+    print lines[i]
+  }
+}
+' "${user_file}" > "${active_file}.tmp"
+
+mv "${active_file}.tmp" "${active_file}"
+EOF
+
+  chmod +x "${LOCAL_BIN}/polybar-prepare"
+}
+
 write_polybar_refresh_script() {
   cat > "${LOCAL_BIN}/polybar-refresh" <<'EOF'
 #!/usr/bin/env bash
@@ -915,6 +973,7 @@ awk -v begin="${mark_begin}" -v end="${mark_end}" '
   printf '%s\n' "${mark_end}"
 } > "${user_file}"
 
+"${HOME}/.local/bin/polybar-prepare" >/dev/null 2>&1 || true
 "${HOME}/.local/bin/launch-polybar" >/dev/null 2>&1 || true
 
 if command -v notify-send >/dev/null 2>&1 && [[ -n "${DISPLAY:-}" ]]; then
@@ -2438,7 +2497,7 @@ format-padding = 1
 tray-spacing = 6
 tray-size = 58%
 
-include-file = ~/.config/polybar/user.ini
+include-file = ~/.config/polybar/user.active.ini
 EOF
 }
 
@@ -3049,6 +3108,7 @@ main() {
   write_control_center_script
   write_power_menu_script
   write_polybar_features_config
+  write_polybar_prepare_script
   write_polybar_refresh_script
   write_polybar_preset_script
   write_avatar_script
