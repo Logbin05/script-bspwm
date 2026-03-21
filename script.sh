@@ -888,6 +888,10 @@ fi
 [[ "$(get_value show_tray true)" == "true" ]] && modules_right+=(tray)
 [[ "$(get_value show_power true)" == "true" ]] && modules_right+=(power)
 
+if (( ${#modules_center[@]} == 0 )); then
+  modules_center=(empty-center)
+fi
+
 mkdir -p "${HOME}/.config/polybar"
 touch "${user_file}"
 
@@ -1028,18 +1032,18 @@ set -euo pipefail
 
 choices="$(
   printf '%s\n' \
-    '󰀻  Запуск приложений' \
-    '󰛳  Настройки приложений' \
-    '󰒓  Системные настройки' \
-    '󰖟  Polybar preset' \
-    '󰇚  Polybar custom' \
-    '󰑓  Применить настройки bar' \
-    '󰉏  Сменить обои' \
-    '󱎓  Приватные файлы (arch-access)' \
-    '󰚰  Обновить setup' \
-    '󰈆  Перезапустить bar' \
-    '󰏗  Обновить систему' \
-    '󰐥  Меню питания'
+    'Запуск приложений' \
+    'Настройки приложений' \
+    'Системные настройки' \
+    'Polybar preset' \
+    'Polybar custom' \
+    'Применить настройки bar' \
+    'Сменить обои' \
+    'Приватные файлы (arch-access)' \
+    'Обновить setup' \
+    'Перезапустить bar' \
+    'Обновить систему' \
+    'Меню питания'
 )"
 
 choice=""
@@ -1068,18 +1072,18 @@ if [[ -z "${choice}" ]] && command -v yad >/dev/null 2>&1; then
 fi
 
 case "${choice}" in
-  "󰀻  Запуск приложений") exec "$HOME/.local/bin/open-app-launcher" ;;
-  "󰛳  Настройки приложений") exec "$HOME/.local/bin/app-settings" ;;
-  "󰒓  Системные настройки") exec "$HOME/.local/bin/system-settings" ;;
-  "󰖟  Polybar preset") exec "$HOME/.local/bin/polybar-preset" ;;
-  "󰇚  Polybar custom") exec "$HOME/.local/bin/app-settings" panel-custom ;;
-  "󰑓  Применить настройки bar") exec "$HOME/.local/bin/polybar-refresh" ;;
-  "󰉏  Сменить обои") exec "$HOME/.local/bin/set-wallpaper" --pick ;;
-  "󱎓  Приватные файлы (arch-access)") exec "$HOME/.local/bin/arch-access" ;;
-  "󰚰  Обновить setup") exec "$HOME/.local/bin/update-imba-script" ;;
-  "󰈆  Перезапустить bar") exec "$HOME/.local/bin/launch-polybar" ;;
-  "󰏗  Обновить систему") exec "$HOME/.local/bin/update-system" ;;
-  "󰐥  Меню питания") exec "$HOME/.local/bin/power-menu" ;;
+  "Запуск приложений") exec "$HOME/.local/bin/open-app-launcher" ;;
+  "Настройки приложений") exec "$HOME/.local/bin/app-settings" ;;
+  "Системные настройки") exec "$HOME/.local/bin/system-settings" ;;
+  "Polybar preset") exec "$HOME/.local/bin/polybar-preset" ;;
+  "Polybar custom") exec "$HOME/.local/bin/app-settings" panel-custom ;;
+  "Применить настройки bar") exec "$HOME/.local/bin/polybar-refresh" ;;
+  "Сменить обои") exec "$HOME/.local/bin/set-wallpaper" --pick ;;
+  "Приватные файлы (arch-access)") exec "$HOME/.local/bin/arch-access" ;;
+  "Обновить setup") exec "$HOME/.local/bin/update-imba-script" ;;
+  "Перезапустить bar") exec "$HOME/.local/bin/launch-polybar" ;;
+  "Обновить систему") exec "$HOME/.local/bin/update-system" ;;
+  "Меню питания") exec "$HOME/.local/bin/power-menu" ;;
 esac
 EOF
 
@@ -1093,28 +1097,28 @@ set -euo pipefail
 
 choice="$(
   printf '%s\n' \
-    '󰀻  Запуск приложений' \
-    '󰛳  Настройки приложений' \
-    '󰒓  Системные настройки' \
-    '󰉏  Сменить обои' \
-    '󰍽  Трекпад' \
-    '󱎓  Приватные файлы' \
-    '󰚰  Обновить setup' \
-    '󰏗  Обновить систему' \
-    '󰐥  Меню питания' |
+    'Запуск приложений' \
+    'Настройки приложений' \
+    'Системные настройки' \
+    'Сменить обои' \
+    'Трекпад' \
+    'Приватные файлы' \
+    'Обновить setup' \
+    'Обновить систему' \
+    'Меню питания' |
     rofi -dmenu -i -p "hub" -theme "$HOME/.config/rofi/menu.rasi" || true
 )"
 
 case "${choice}" in
-  "󰀻  Запуск приложений") exec "$HOME/.local/bin/open-app-launcher" ;;
-  "󰛳  Настройки приложений") exec "$HOME/.local/bin/app-settings" ;;
-  "󰒓  Системные настройки") exec "$HOME/.local/bin/system-settings" ;;
-  "󰉏  Сменить обои") exec "$HOME/.local/bin/set-wallpaper" --pick ;;
-  "󰍽  Трекпад") exec "$HOME/.local/bin/configure-input-devices" ;;
-  "󱎓  Приватные файлы") exec "$HOME/.local/bin/arch-access" ;;
-  "󰚰  Обновить setup") exec "$HOME/.local/bin/update-imba-script" ;;
-  "󰏗  Обновить систему") exec "$HOME/.local/bin/update-system" ;;
-  "󰐥  Меню питания") exec "$HOME/.local/bin/power-menu" ;;
+  "Запуск приложений") exec "$HOME/.local/bin/open-app-launcher" ;;
+  "Настройки приложений") exec "$HOME/.local/bin/app-settings" ;;
+  "Системные настройки") exec "$HOME/.local/bin/system-settings" ;;
+  "Сменить обои") exec "$HOME/.local/bin/set-wallpaper" --pick ;;
+  "Трекпад") exec "$HOME/.local/bin/configure-input-devices" ;;
+  "Приватные файлы") exec "$HOME/.local/bin/arch-access" ;;
+  "Обновить setup") exec "$HOME/.local/bin/update-imba-script" ;;
+  "Обновить систему") exec "$HOME/.local/bin/update-system" ;;
+  "Меню питания") exec "$HOME/.local/bin/power-menu" ;;
 esac
 EOF
 
@@ -1128,24 +1132,24 @@ set -euo pipefail
 
 choice="$(
   printf '%s\n' \
-    '󰍃  Заблокировать' \
-    '󰤄  Сон' \
-    '󰜉  Перезагрузить' \
-    '󰐥  Выключить' \
-    '󰗼  Выйти из bspwm' |
+    'Заблокировать' \
+    'Сон' \
+    'Перезагрузить' \
+    'Выключить' \
+    'Выйти из bspwm' |
     rofi -dmenu -i -p "power" -theme "$HOME/.config/rofi/menu.rasi" || true
 )"
 
 case "${choice}" in
-  "󰍃  Заблокировать") exec "$HOME/.local/bin/lock-screen" ;;
-  "󰤄  Сон")
+  "Заблокировать") exec "$HOME/.local/bin/lock-screen" ;;
+  "Сон")
     "$HOME/.local/bin/lock-screen"
     sleep 0.8
     systemctl suspend
     ;;
-  "󰜉  Перезагрузить") systemctl reboot ;;
-  "󰐥  Выключить") systemctl poweroff ;;
-  "󰗼  Выйти из bspwm") bspc quit ;;
+  "Перезагрузить") systemctl reboot ;;
+  "Выключить") systemctl poweroff ;;
+  "Выйти из bspwm") bspc quit ;;
 esac
 EOF
 
@@ -2174,7 +2178,7 @@ radius = 12
 padding-left = 1
 padding-right = 1
 module-margin = 0
-font-main = JetBrainsMono Nerd Font:size=9.5;2
+font-main = JetBrainsMono Nerd Font:size=10;2
 font-emoji = Noto Color Emoji:size=9;1
 modules-left = launcher bspwm
 modules-center = xwindow
@@ -2276,6 +2280,13 @@ label = %title:0:46:...%
 label-empty = workspace
 label-empty-foreground = \${colors.muted}
 click-right = ~/.local/bin/bar-context-menu
+
+[module/empty-center]
+type = custom/text
+content =
+content-background = \${colors.surface-alt}
+content-foreground = \${colors.foreground}
+content-padding = 0
 
 [module/updates]
 type = custom/script
