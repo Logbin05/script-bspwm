@@ -363,7 +363,6 @@ log_dir="${HOME}/.cache/polybar"
 log_file="${log_dir}/main.log"
 config_file="${HOME}/.config/polybar/config.ini"
 fallback_file="${HOME}/.config/polybar/fallback.ini"
-prepare_script="${HOME}/.local/bin/polybar-prepare"
 
 mkdir -p "${log_dir}"
 
@@ -446,10 +445,6 @@ fi
 
 printf '\n[%s] launch request\n' "$(date +'%F %T')" >> "${log_file}"
 pkill -x polybar >/dev/null 2>&1 || true
-
-if [[ -x "${prepare_script}" ]]; then
-  "${prepare_script}" >> "${log_file}" 2>&1 || true
-fi
 
 if start_bar_group "${config_file}" "main"; then
   exit 0
@@ -820,6 +815,7 @@ show_battery=auto
 show_date=true
 show_tray=true
 show_power=true
+window_title_length=46
 EOF
 }
 
@@ -880,9 +876,7 @@ write_polybar_refresh_script() {
 set -euo pipefail
 
 features_file="${HOME}/.config/polybar/features.ini"
-user_file="${HOME}/.config/polybar/user.ini"
-mark_begin="# >>> IMBA BAR FEATURES >>>"
-mark_end="# <<< IMBA BAR FEATURES <<<"
+config_file="${HOME}/.config/polybar/config.ini"
 
 get_value() {
   local key="$1"
@@ -910,6 +904,74 @@ get_value() {
 
   [[ -n "${value}" ]] || value="${default}"
   printf '%s' "${value}"
+}
+
+set_ini_key() {
+  local section="$1"
+  local key="$2"
+  local value="$3"
+  local file="$4"
+  local tmp_file
+
+  tmp_file="$(mktemp)"
+
+  awk -v target_section="${section}" -v target_key="${key}" -v target_value="${value}" '
+    BEGIN {
+      in_target = 0
+      section_found = 0
+      key_written = 0
+    }
+
+    function print_value() {
+      printf "%s = %s\n", target_key, target_value
+      key_written = 1
+    }
+
+    {
+      line = $0
+
+      if (match(line, /^[[:space:]]*\[[^]]+\][[:space:]]*$/)) {
+        if (in_target && !key_written) {
+          print_value()
+        }
+
+        section_name = line
+        gsub(/^[[:space:]]*\[/, "", section_name)
+        gsub(/\][[:space:]]*$/, "", section_name)
+
+        if (tolower(section_name) == tolower(target_section)) {
+          in_target = 1
+          section_found = 1
+        } else {
+          in_target = 0
+        }
+
+        print line
+        next
+      }
+
+      if (in_target && match(line, "^[[:space:]]*" target_key "[[:space:]]*=")) {
+        if (!key_written) {
+          print_value()
+        }
+        next
+      }
+
+      print line
+    }
+
+    END {
+      if (!section_found) {
+        print ""
+        printf "[%s]\n", target_section
+        print_value()
+      } else if (in_target && !key_written) {
+        print_value()
+      }
+    }
+  ' "${file}" > "${tmp_file}"
+
+  mv "${tmp_file}" "${file}"
 }
 
 has_battery() {
@@ -950,30 +1012,25 @@ if (( ${#modules_center[@]} == 0 )); then
   modules_center=(empty-center)
 fi
 
+title_len="$(get_value window_title_length 46)"
+if ! [[ "${title_len}" =~ ^[0-9]+$ ]]; then
+  title_len=46
+fi
+if (( title_len < 20 )); then
+  title_len=20
+fi
+if (( title_len > 120 )); then
+  title_len=120
+fi
+
 mkdir -p "${HOME}/.config/polybar"
-touch "${user_file}"
+touch "${config_file}"
 
-tmp_file="$(mktemp)"
-trap 'rm -f "${tmp_file}"' EXIT
+set_ini_key "ui" "modules-left" "${modules_left[*]}" "${config_file}"
+set_ini_key "ui" "modules-center" "${modules_center[*]}" "${config_file}"
+set_ini_key "ui" "modules-right" "${modules_right[*]}" "${config_file}"
+set_ini_key "module/xwindow" "label" "%title:0:${title_len}:...%" "${config_file}"
 
-awk -v begin="${mark_begin}" -v end="${mark_end}" '
-  $0 == begin { skip=1; next }
-  $0 == end { skip=0; next }
-  !skip { print }
-' "${user_file}" > "${tmp_file}"
-
-{
-  cat "${tmp_file}"
-  [[ -s "${tmp_file}" ]] && printf '\n'
-  printf '%s\n' "${mark_begin}"
-  printf '%s\n' "[ui]"
-  printf 'modules-left = %s\n' "${modules_left[*]}"
-  printf 'modules-center = %s\n' "${modules_center[*]}"
-  printf 'modules-right = %s\n' "${modules_right[*]}"
-  printf '%s\n' "${mark_end}"
-} > "${user_file}"
-
-"${HOME}/.local/bin/polybar-prepare" >/dev/null 2>&1 || true
 "${HOME}/.local/bin/launch-polybar" >/dev/null 2>&1 || true
 
 if command -v notify-send >/dev/null 2>&1 && [[ -n "${DISPLAY:-}" ]]; then
@@ -1374,7 +1431,7 @@ open_target() {
     firefox) exec firefox --new-window about:preferences ;;
     terminal) open_terminal_editor "$HOME/.config/alacritty/alacritty.toml" ;;
     panel) open_terminal_editor "$HOME/.config/polybar/config.ini" ;;
-    panel-custom) open_terminal_editor "$HOME/.config/polybar/user.ini" ;;
+    panel-custom) open_terminal_editor "$HOME/.config/polybar/config.ini" ;;
     panel-features) open_terminal_editor "$HOME/.config/polybar/features.ini" ;;
     panel-preset) exec "$HOME/.local/bin/polybar-preset" ;;
     panel-refresh) exec "$HOME/.local/bin/polybar-refresh" ;;
@@ -1405,7 +1462,7 @@ choice="$(
     "Firefox" "about:preferences, стартовая страница и приватность" \
     "Alacritty" "Конфиг прозрачности, шрифта и цветов" \
     "Polybar" "Главный конфиг информативного хедбара" \
-    "Polybar Custom" "Твой личный слой кастомизации bar без правки core" \
+    "Polybar Custom" "Ручная тонкая настройка bar в config.ini" \
     "Polybar Features" "Тогглы модулей через ~/.config/polybar/features.ini" \
     "Polybar Refresh" "Применить toggles и перезапустить bar" \
     "Polybar Preset" "Быстрый выбор профиля: focus/balanced/monitoring" \
@@ -1450,7 +1507,7 @@ open_target() {
     display) exec arandr ;;
     display-layout) exec "$HOME/.local/bin/apply-monitor-layout" ;;
     trackpad) exec "$HOME/.local/bin/configure-input-devices" ;;
-    bar) exec "$HOME/.local/bin/app-settings" panel-custom ;;
+    bar) exec "$HOME/.local/bin/app-settings" panel ;;
     bar-refresh) exec "$HOME/.local/bin/polybar-refresh" ;;
     appearance) exec lxappearance ;;
     wallpaper) exec "$HOME/.local/bin/set-wallpaper" --pick ;;
@@ -1721,53 +1778,22 @@ EOF
 
 write_polybar_user_config() {
   if [[ -f "${CONFIG_DIR}/polybar/user.ini" ]]; then
-    warn "Polybar user.ini уже существует, оставляю как есть."
+    warn "Polybar user.ini уже существует, оставляю как есть (файл не обязателен для запуска bar)."
     return
   fi
 
   cat > "${CONFIG_DIR}/polybar/user.ini" <<'EOF'
-; Personal Polybar overrides.
-; Измени любые параметры ниже, чтобы настроить бар под себя.
-; После правок можно применить так: super+shift+b
-
-[ui]
-width = 98%
-offset-x = 1%
-offset-y = 8
-height = 34
-radius = 12
-padding-left = 1
-padding-right = 1
-module-margin = 0
-modules-left = launcher bspwm
-modules-center = xwindow
-modules-right = current-desktop wifi-icon bluetooth-icon control updates pulseaudio date tray power
-
-[colors]
-primary = #84D8C2
-secondary = #F3C782
-accent = #8FB9FF
-alert = #F49BB4
-surface = #EA131922
-surface-alt = #F01A232E
-
-[module/xwindow]
-label = %title:0:46:...%
-
-[module/date]
-date = %a %d %b
-time = %H:%M
-
-; Пример минималистичного профиля:
-; [ui]
-; modules-right = wifi-icon bluetooth-icon control pulseaudio date power
-
-; Тогглы модулей (удобнее, чем руками перечислять модули):
+; Пользовательский файл заметок для Polybar.
+; Актуальные настройки bar:
+;   ~/.config/polybar/config.ini
 ; ~/.config/polybar/features.ini
 ; ~/.local/bin/polybar-refresh
-
-; Быстрый выбор профиля без ручной правки:
+;
+; Быстрый выбор профиля:
 ; ~/.local/bin/polybar-preset
+;
+; Важно: чтобы не ловить duplicate keys, не дублируй [ui] и [module/xwindow]
+; в include-файлах. Меняй эти параметры в config.ini или через features.ini.
 EOF
 }
 
@@ -1879,21 +1905,8 @@ write_polybar_preset_script() {
 #!/usr/bin/env bash
 set -euo pipefail
 
-user_file="${HOME}/.config/polybar/user.ini"
-mark_begin="# >>> IMBA BAR PRESET >>>"
-mark_end="# <<< IMBA BAR PRESET <<<"
+features_file="${HOME}/.config/polybar/features.ini"
 preset="${1:-}"
-
-has_battery() {
-  local d
-  for d in /sys/class/power_supply/*; do
-    [[ -f "${d}/type" ]] || continue
-    if grep -qx "Battery" "${d}/type"; then
-      return 0
-    fi
-  done
-  return 1
-}
 
 if [[ -z "${preset}" ]]; then
   preset="$(
@@ -1902,51 +1915,103 @@ if [[ -z "${preset}" ]]; then
   )"
 fi
 
-battery_module=""
-if has_battery; then
-  battery_module=" battery"
-fi
+set_feature() {
+  local key="$1"
+  local value="$2"
+  local tmp_file
+
+  mkdir -p "$(dirname "${features_file}")"
+  touch "${features_file}"
+  tmp_file="$(mktemp)"
+
+  awk -F= -v target_key="${key}" -v target_value="${value}" '
+    BEGIN {
+      written = 0
+    }
+    {
+      if ($0 ~ /^[[:space:]]*#/ || NF < 2) {
+        print $0
+        next
+      }
+
+      key = $1
+      gsub(/[[:space:]]/, "", key)
+
+      if (tolower(key) == tolower(target_key)) {
+        if (!written) {
+          printf "%s=%s\n", target_key, target_value
+          written = 1
+        }
+        next
+      }
+
+      print $0
+    }
+    END {
+      if (!written) {
+        printf "%s=%s\n", target_key, target_value
+      }
+    }
+  ' "${features_file}" > "${tmp_file}"
+
+  mv "${tmp_file}" "${features_file}"
+}
 
 case "${preset}" in
   balanced)
-    modules_right="current-desktop wifi-icon bluetooth-icon control updates pulseaudio${battery_module} date tray power"
-    title_len="46"
+    set_feature show_workspaces true
+    set_feature show_window_title true
+    set_feature show_current_desktop true
+    set_feature show_updates true
+    set_feature show_audio true
+    set_feature show_cpu false
+    set_feature show_memory false
+    set_feature show_network_text false
+    set_feature show_bluetooth_text false
+    set_feature show_battery auto
+    set_feature show_date true
+    set_feature show_tray true
+    set_feature show_power true
+    set_feature window_title_length 46
     ;;
   focus)
-    modules_right="wifi-icon bluetooth-icon control pulseaudio${battery_module} date power"
-    title_len="58"
+    set_feature show_workspaces true
+    set_feature show_window_title true
+    set_feature show_current_desktop false
+    set_feature show_updates false
+    set_feature show_audio true
+    set_feature show_cpu false
+    set_feature show_memory false
+    set_feature show_network_text false
+    set_feature show_bluetooth_text false
+    set_feature show_battery auto
+    set_feature show_date true
+    set_feature show_tray false
+    set_feature show_power true
+    set_feature window_title_length 58
     ;;
   monitoring)
-    modules_right="current-desktop wifi-icon bluetooth-icon control updates cpu memory pulseaudio${battery_module} date tray power"
-    title_len="40"
+    set_feature show_workspaces true
+    set_feature show_window_title true
+    set_feature show_current_desktop true
+    set_feature show_updates true
+    set_feature show_audio true
+    set_feature show_cpu true
+    set_feature show_memory true
+    set_feature show_network_text false
+    set_feature show_bluetooth_text false
+    set_feature show_battery auto
+    set_feature show_date true
+    set_feature show_tray true
+    set_feature show_power true
+    set_feature window_title_length 40
     ;;
   *)
     exit 0
     ;;
 esac
 
-mkdir -p "${HOME}/.config/polybar"
-touch "${user_file}"
-
-tmp_file="$(mktemp)"
-trap 'rm -f "${tmp_file}"' EXIT
-
-awk -v begin="${mark_begin}" -v end="${mark_end}" '
-  $0 == begin { skip=1; next }
-  $0 == end { skip=0; next }
-  !skip { print }
-' "${user_file}" > "${tmp_file}"
-
-{
-  cat "${tmp_file}"
-  [[ -s "${tmp_file}" ]] && printf '\n'
-  printf '%s\n' "${mark_begin}"
-  printf '%s\n' "[ui]"
-  printf 'modules-right = %s\n' "${modules_right}"
-  printf '%s\n' "[module/xwindow]"
-  printf 'label = %%title:0:%s:...%%\n' "${title_len}"
-  printf '%s\n' "${mark_end}"
-} > "${user_file}"
+"$HOME/.local/bin/polybar-refresh" >/dev/null 2>&1 || true
 
 if command -v notify-send >/dev/null 2>&1 && [[ -n "${DISPLAY:-}" ]]; then
   notify-send "Bar preset" "Применён профиль: ${preset}"
@@ -2496,8 +2561,6 @@ format-foreground = \${colors.foreground}
 format-padding = 1
 tray-spacing = 6
 tray-size = 58%
-
-include-file = ~/.config/polybar/user.active.ini
 EOF
 }
 
@@ -3041,7 +3104,7 @@ print_next_steps() {
   echo "   ~/.local/bin/update-imba-script"
   echo
   echo "8. Кастомизация bar без ломки core:"
-  echo "   ~/.config/polybar/user.ini"
+  echo "   ~/.config/polybar/config.ini"
   echo "   ~/.config/polybar/features.ini"
   echo "   ~/.local/bin/polybar-refresh"
   echo "   ~/.local/bin/polybar-preset"
@@ -3108,7 +3171,6 @@ main() {
   write_control_center_script
   write_power_menu_script
   write_polybar_features_config
-  write_polybar_prepare_script
   write_polybar_refresh_script
   write_polybar_preset_script
   write_avatar_script

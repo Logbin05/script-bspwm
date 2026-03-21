@@ -6,8 +6,7 @@
 - обязательные иконки в bar: `Wi-Fi`, `Bluetooth`, `Settings` (macOS-like подача)
 - компактные столы `1..n` в баре и отдельный индикатор текущего рабочего стола сбоку
 - стабильное контекстное меню bar (right-click + fallback через `yad`, если `rofi` не открылся)
-- отдельный `~/.config/polybar/user.ini` для кастомизации bar без правки core-конфига
-- отдельный `~/.config/polybar/features.ini` с toggles того, какую инфу показывать в bar
+- `~/.config/polybar/config.ini` как основной конфиг bar + `~/.config/polybar/features.ini` для безопасных toggles
 - быстрые пресеты бара через `~/.local/bin/polybar-preset` (`focus`, `balanced`, `monitoring`)
 - `App Deck` для выбора приложений через красивую сетку `rofi`
 - `quick hub`, отдельные окна настроек приложений и системных настроек
@@ -48,7 +47,7 @@ sudo reboot
 - `Alt+Ctrl+m` переприменит layout мониторов и перезапустит bar
 - при открытии интерактивного терминала будет показываться `fastfetch`
 - `ssh-agent` будет подниматься как user-service для текущей учётки
-- bar можно тюнить через `~/.config/polybar/user.ini`, затем применить `Alt+Shift+b`
+- bar можно тюнить через `~/.config/polybar/config.ini` и `~/.config/polybar/features.ini`
 - bar включается по умолчанию (автостарт в `bspwm`) и поднимается сразу после установки, если ты уже в GUI
 - правый клик на модулях launcher/current-desktop/window/volume/network/bluetooth/date/power открывает контекстное меню bar
 
@@ -139,19 +138,19 @@ sudo reboot
 
 ## Кастомизация Polybar
 
-Основной конфиг генерируется в `~/.config/polybar/config.ini`, а твои личные переопределения в:
+Основной конфиг и layout модулей:
 
 ```text
-~/.config/polybar/user.ini
+~/.config/polybar/config.ini
 ```
 
-Тогглы модулей, чтобы реально выбрать какую инфу показывать в bar:
+Тогглы модулей и длина заголовка окна:
 
 ```text
 ~/.config/polybar/features.ini
 ```
 
-В `user.ini` можно менять:
+В `config.ini` можно менять:
 
 - высоту/радиус/отступы бара
 - набор модулей слева/в центре/справа
@@ -169,8 +168,6 @@ sudo reboot
 ```bash
 ~/.local/bin/polybar-preset
 ```
-
-После изменений нажми `Alt+Shift+b`, чтобы перезапустить `bspwm` и применить новый bar.
 
 Если bar не появился, проверь лог:
 
