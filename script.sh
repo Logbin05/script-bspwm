@@ -2294,11 +2294,11 @@ alert = #F49BB4
 border = #22303D
 
 [ui]
-width = 98%
-offset-x = 1%
-offset-y = 8
+width = 100%
+offset-x = 0
+offset-y = 0
 height = 34
-radius = 12
+radius = 0
 padding-left = 1
 padding-right = 1
 module-margin = 0
