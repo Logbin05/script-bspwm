@@ -13,6 +13,7 @@
 - полностью кастомный `lock screen` на `i3lock`: blur фон, время/дата, акцентные состояния, аватар и fallback на greeter
 - `ssh-agent`, привязанный к учётке, плюс helper для привязки SSH ключа без ручного запуска агента
 - helper для установки своих обоев: `~/.local/bin/set-wallpaper --pick`
+- helper для распаковки архивов (`zip/rar/7z/tar/...`): `~/.local/bin/extract-any --pick`
 - helper для скриншотов: весь экран, область или активное окно (`~/.local/bin/take-screenshot`)
 - переключение готовых тем интерфейса (`ocean/sunset/forest/nord/graphite`) через `~/.local/bin/imba-theme`
 - поддержка 2+ мониторов: авто-раскладка рабочих столов и запуск bar на каждом мониторе
@@ -46,6 +47,7 @@ sudo reboot
 - `Alt+Ctrl+a` откроет `arch-access` для приватных файлов
 - `Alt+Ctrl+u` проверит обновления самого setup-скрипта
 - `Alt+Ctrl+w` откроет выбор своих обоев
+- `Alt+Ctrl+x` откроет распаковщик архивов
 - `Print` снимет скриншот всего экрана, `Shift+Print` — области
 - `Alt+Shift+s` откроет быстрый скриншот выделенной области
 - `Alt+Ctrl+t` откроет выбор темы интерфейса
@@ -76,6 +78,7 @@ sudo reboot
 - `Alt+Ctrl+a` или `Super+Ctrl+a` -> `arch-access` (приватные файлы)
 - `Alt+Ctrl+u` или `Super+Ctrl+u` -> обновление setup-скрипта
 - `Alt+Ctrl+w` или `Super+Ctrl+w` -> установить свои обои
+- `Alt+Ctrl+x` или `Super+Ctrl+x` -> распаковка архивов
 - `Print` -> скриншот всего экрана
 - `Shift+Print` -> скриншот выделенной области
 - `Ctrl+Print` -> скриншот активного окна
@@ -196,6 +199,23 @@ sudo reboot
 ```
 
 Обои сохраняются как `~/Pictures/Wallpapers/wallpaper.jpg` и применяются автоматически при старте сессии.
+
+## Архивы
+
+Распаковка архивов любого популярного формата:
+
+```bash
+~/.local/bin/extract-any --pick
+```
+
+Или явно указать архив и папку:
+
+```bash
+~/.local/bin/extract-any ~/Downloads/archive.zip
+~/.local/bin/extract-any ~/Downloads/archive.rar ~/Downloads/unpacked
+```
+
+Скрипт пытается использовать `7z`, а если недоступно — fallback на `unzip`/`unrar`/`bsdtar`.
 
 ## Скриншоты
 

@@ -153,6 +153,7 @@ BACKUP_TARGETS=(
   "${LOCAL_BIN}/lock-screen"
   "${LOCAL_BIN}/open-app-launcher"
   "${LOCAL_BIN}/power-menu"
+  "${LOCAL_BIN}/extract-any"
   "${LOCAL_BIN}/take-screenshot"
   "${LOCAL_BIN}/imba-theme"
   "${LOCAL_BIN}/polybar-prepare"
@@ -198,9 +199,44 @@ backup_existing_files() {
   done
 }
 
+package_exists_in_repo() {
+  local pkg="$1"
+  pacman -Si "${pkg}" >/dev/null 2>&1
+}
+
+collect_archive_packages() {
+  local extras=()
+  local pkg
+
+  for pkg in unzip zip unrar file-roller thunar-archive-plugin; do
+    if package_exists_in_repo "${pkg}"; then
+      extras+=("${pkg}")
+    fi
+  done
+
+  if package_exists_in_repo 7zip; then
+    extras+=("7zip")
+  elif package_exists_in_repo p7zip; then
+    extras+=("p7zip")
+  fi
+
+  printf '%s\n' "${extras[@]}"
+}
+
 install_packages() {
+  local packages_to_install=("${PACKAGES[@]}")
+  local archive_packages=()
+
   info "Обновление системы и установка пакетов"
-  sudo pacman -Syu --needed --noconfirm "${PACKAGES[@]}"
+
+  mapfile -t archive_packages < <(collect_archive_packages)
+  if (( ${#archive_packages[@]} > 0 )); then
+    packages_to_install+=("${archive_packages[@]}")
+  else
+    warn "Не удалось подобрать архивные пакеты из репозитория. Распаковщик будет работать через доступные утилиты."
+  fi
+
+  sudo pacman -Syu --needed --noconfirm "${packages_to_install[@]}"
   done_msg "Пакеты установлены."
 }
 
@@ -725,6 +761,173 @@ fi
 EOF
 
   chmod +x "${LOCAL_BIN}/set-wallpaper"
+}
+
+write_extract_script() {
+  cat > "${LOCAL_BIN}/extract-any" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+archive="${1:---pick}"
+target_dir="${2:-}"
+
+usage() {
+  cat <<'USAGE'
+Использование: extract-any [архив|--pick] [папка_назначения]
+
+Примеры:
+  extract-any --pick
+  extract-any ~/Downloads/file.zip
+  extract-any ~/Downloads/file.rar ~/Downloads/unpacked
+USAGE
+}
+
+notify_msg() {
+  local title="$1"
+  local body="$2"
+  if command -v notify-send >/dev/null 2>&1 && [[ -n "${DISPLAY:-}" ]]; then
+    notify-send "${title}" "${body}"
+  fi
+}
+
+pick_archive() {
+  local selected=""
+
+  if command -v yad >/dev/null 2>&1 && [[ -n "${DISPLAY:-}" ]]; then
+    selected="$(
+      yad \
+        --file \
+        --title="Выбери архив для распаковки" \
+        --file-filter="Archives | *.zip *.rar *.7z *.tar *.tar.gz *.tgz *.tar.bz2 *.tbz2 *.tar.xz *.txz *.tar.zst *.tzst *.gz *.bz2 *.xz *.zst *.iso" || true
+    )"
+  elif command -v rofi >/dev/null 2>&1 && [[ -n "${DISPLAY:-}" ]]; then
+    selected="$(
+      find "$HOME" -maxdepth 4 -type f \
+        \( -iname "*.zip" -o -iname "*.rar" -o -iname "*.7z" -o -iname "*.tar" -o -iname "*.tar.gz" -o -iname "*.tgz" -o -iname "*.tar.bz2" -o -iname "*.tbz2" -o -iname "*.tar.xz" -o -iname "*.txz" -o -iname "*.tar.zst" -o -iname "*.tzst" -o -iname "*.gz" -o -iname "*.bz2" -o -iname "*.xz" -o -iname "*.zst" -o -iname "*.iso" \) 2>/dev/null |
+        rofi -dmenu -i -p "archive path" -theme "$HOME/.config/rofi/menu.rasi" || true
+    )"
+  else
+    printf 'Введи путь к архиву: ' >&2
+    read -r selected || true
+  fi
+
+  printf '%s' "${selected}"
+}
+
+default_target_dir() {
+  local path="$1"
+  local name
+
+  name="$(basename "${path}")"
+  name="${name%.tar.gz}"
+  name="${name%.tar.bz2}"
+  name="${name%.tar.xz}"
+  name="${name%.tar.zst}"
+  name="${name%.tgz}"
+  name="${name%.tbz2}"
+  name="${name%.txz}"
+  name="${name%.tzst}"
+  name="${name%.zip}"
+  name="${name%.rar}"
+  name="${name%.7z}"
+  name="${name%.tar}"
+  name="${name%.gz}"
+  name="${name%.bz2}"
+  name="${name%.xz}"
+  name="${name%.zst}"
+  name="${name%.iso}"
+
+  if [[ -z "${name}" ]]; then
+    name="unpacked"
+  fi
+
+  printf '%s' "${PWD}/${name}"
+}
+
+extract_with_7z() {
+  local src="$1"
+  local dst="$2"
+
+  command -v 7z >/dev/null 2>&1 || return 1
+  7z x -y -aoa "-o${dst}" -- "${src}"
+}
+
+extract_with_bsdtar() {
+  local src="$1"
+  local dst="$2"
+
+  command -v bsdtar >/dev/null 2>&1 || return 1
+  bsdtar -xf "${src}" -C "${dst}"
+}
+
+extract_with_unzip() {
+  local src="$1"
+  local dst="$2"
+
+  command -v unzip >/dev/null 2>&1 || return 1
+  unzip -o "${src}" -d "${dst}"
+}
+
+extract_with_unrar() {
+  local src="$1"
+  local dst="$2"
+
+  command -v unrar >/dev/null 2>&1 || return 1
+  unrar x -o+ "${src}" "${dst}/"
+}
+
+case "${archive}" in
+  -h|--help)
+    usage
+    exit 0
+    ;;
+esac
+
+if [[ "${archive}" == "--pick" || -z "${archive}" ]]; then
+  archive="$(pick_archive)"
+fi
+
+[[ -n "${archive}" ]] || exit 0
+
+archive="${archive/#\~/$HOME}"
+archive="$(realpath -m "${archive}")"
+[[ -f "${archive}" ]] || {
+  printf '[ERROR] Архив не найден: %s\n' "${archive}" >&2
+  exit 1
+}
+
+if [[ -z "${target_dir}" ]]; then
+  target_dir="$(default_target_dir "${archive}")"
+fi
+
+target_dir="${target_dir/#\~/$HOME}"
+target_dir="$(realpath -m "${target_dir}")"
+mkdir -p "${target_dir}"
+
+lower_archive="$(printf '%s' "${archive}" | tr '[:upper:]' '[:lower:]')"
+ok=0
+
+if extract_with_7z "${archive}" "${target_dir}" >/dev/null 2>&1; then
+  ok=1
+elif [[ "${lower_archive}" == *.zip ]] && extract_with_unzip "${archive}" "${target_dir}" >/dev/null 2>&1; then
+  ok=1
+elif [[ "${lower_archive}" == *.rar ]] && extract_with_unrar "${archive}" "${target_dir}" >/dev/null 2>&1; then
+  ok=1
+elif extract_with_bsdtar "${archive}" "${target_dir}" >/dev/null 2>&1; then
+  ok=1
+fi
+
+if (( ok == 0 )); then
+  printf '[ERROR] Не удалось распаковать: %s\n' "${archive}" >&2
+  printf '[ERROR] Установи 7zip/unrar/unzip/bsdtar и попробуй снова.\n' >&2
+  exit 1
+fi
+
+notify_msg "Архив распакован" "${target_dir}"
+printf '%s\n' "${target_dir}"
+EOF
+
+  chmod +x "${LOCAL_BIN}/extract-any"
 }
 
 write_screenshot_script() {
@@ -1642,6 +1845,7 @@ choices="$(
     'Применить настройки bar' \
     'Сменить тему' \
     'Сменить обои' \
+    'Распаковать архив' \
     'Скриншот' \
     'Приватные файлы (arch-access)' \
     'Обновить setup' \
@@ -1684,6 +1888,7 @@ case "${choice}" in
   "Применить настройки bar") exec "$HOME/.local/bin/polybar-refresh" ;;
   "Сменить тему") exec "$HOME/.local/bin/imba-theme" --pick ;;
   "Сменить обои") exec "$HOME/.local/bin/set-wallpaper" --pick ;;
+  "Распаковать архив") exec "$HOME/.local/bin/extract-any" --pick ;;
   "Скриншот") exec "$HOME/.local/bin/take-screenshot" --pick ;;
   "Приватные файлы (arch-access)") exec "$HOME/.local/bin/arch-access" ;;
   "Обновить setup") exec "$HOME/.local/bin/update-imba-script" ;;
@@ -1708,6 +1913,7 @@ choice="$(
     'Системные настройки' \
     'Сменить тему' \
     'Сменить обои' \
+    'Распаковать архив' \
     'Скриншот' \
     'Трекпад' \
     'Приватные файлы' \
@@ -1723,6 +1929,7 @@ case "${choice}" in
   "Системные настройки") exec "$HOME/.local/bin/system-settings" ;;
   "Сменить тему") exec "$HOME/.local/bin/imba-theme" --pick ;;
   "Сменить обои") exec "$HOME/.local/bin/set-wallpaper" --pick ;;
+  "Распаковать архив") exec "$HOME/.local/bin/extract-any" --pick ;;
   "Скриншот") exec "$HOME/.local/bin/take-screenshot" --pick ;;
   "Трекпад") exec "$HOME/.local/bin/configure-input-devices" ;;
   "Приватные файлы") exec "$HOME/.local/bin/arch-access" ;;
@@ -1930,6 +2137,7 @@ open_target() {
     panel-preset) exec "$HOME/.local/bin/polybar-preset" ;;
     panel-refresh) exec "$HOME/.local/bin/polybar-refresh" ;;
     theme) exec "$HOME/.local/bin/imba-theme" --pick ;;
+    archives) exec "$HOME/.local/bin/extract-any" --pick ;;
     screenshot) exec "$HOME/.local/bin/take-screenshot" --pick ;;
     launcher) open_terminal_editor "$HOME/.config/rofi/launcher.rasi" ;;
     notifications) open_terminal_editor "$HOME/.config/dunst/dunstrc" ;;
@@ -1963,6 +2171,7 @@ choice="$(
     "Polybar Refresh" "Применить toggles и перезапустить bar" \
     "Polybar Preset" "Быстрый выбор профиля: focus/balanced/monitoring" \
     "Desktop Theme" "Переключить палитру интерфейса (bar/rofi/dunst)" \
+    "Archive Extractor" "Распаковка zip/rar/7z/tar и других архивов" \
     "Screenshot" "Скриншот экрана, области или окна" \
     "Rofi Launcher" "Сетка приложений и quick hub" \
     "Dunst" "Уведомления и их оформление" \
@@ -1983,6 +2192,7 @@ case "${selection}" in
   "Polybar Refresh") open_target panel-refresh ;;
   "Polybar Preset") open_target panel-preset ;;
   "Desktop Theme") open_target theme ;;
+  "Archive Extractor") open_target archives ;;
   Screenshot) open_target screenshot ;;
   "Rofi Launcher") open_target launcher ;;
   Dunst) open_target notifications ;;
@@ -2010,6 +2220,7 @@ open_target() {
     bar) exec "$HOME/.local/bin/app-settings" panel ;;
     bar-refresh) exec "$HOME/.local/bin/polybar-refresh" ;;
     theme) exec "$HOME/.local/bin/imba-theme" --pick ;;
+    archives) exec "$HOME/.local/bin/extract-any" --pick ;;
     appearance) exec lxappearance ;;
     wallpaper) exec "$HOME/.local/bin/set-wallpaper" --pick ;;
     screenshot) exec "$HOME/.local/bin/take-screenshot" --pick ;;
@@ -2047,6 +2258,7 @@ choice="$(
     "Трекпад" "Включить tap-to-click, natural scroll и libinput tweaks" \
     "Тема интерфейса" "Быстрое переключение готовых тем (ocean/sunset/forest/nord/graphite)" \
     "Обои" "Поставить свои обои и применить сразу" \
+    "Архивы" "Распаковка zip/rar/7z/tar и других форматов" \
     "Скриншоты" "Снять весь экран, область или активное окно" \
     "Polybar" "Быстрая настройка bar и пресетов" \
     "Применить Polybar" "Прочитать features.ini и обновить bar" \
@@ -2072,6 +2284,7 @@ case "${selection}" in
   Трекпад) open_target trackpad ;;
   "Тема интерфейса") open_target theme ;;
   Обои) open_target wallpaper ;;
+  Архивы) open_target archives ;;
   Скриншоты) open_target screenshot ;;
   Polybar) open_target bar ;;
   "Применить Polybar") open_target bar-refresh ;;
@@ -2658,6 +2871,13 @@ super + ctrl + w
 
 alt + ctrl + w
     ~/.local/bin/set-wallpaper --pick
+
+# unpack archives
+super + ctrl + x
+    ~/.local/bin/extract-any --pick
+
+alt + ctrl + x
+    ~/.local/bin/extract-any --pick
 
 # screenshots
 Print
@@ -3627,34 +3847,37 @@ print_next_steps() {
   echo "3. Если хочешь поставить свои обои:"
   echo "   ~/.local/bin/set-wallpaper --pick"
   echo
-  echo "4. Если нужен ручной твик трекпада:"
+  echo "4. Если хочешь распаковать архив:"
+  echo "   ~/.local/bin/extract-any --pick"
+  echo
+  echo "5. Если нужен ручной твик трекпада:"
   echo "   ~/.local/bin/configure-input-devices"
   echo
-  echo "5. Если хочешь сделать скриншот:"
+  echo "6. Если хочешь сделать скриншот:"
   echo "   ~/.local/bin/take-screenshot --pick"
   echo
-  echo "6. Если хочешь быстро сменить тему:"
+  echo "7. Если хочешь быстро сменить тему:"
   echo "   ~/.local/bin/imba-theme --pick"
   echo
-  echo "7. Если хочешь привязать свой SSH ключ вручную:"
+  echo "8. Если хочешь привязать свой SSH ключ вручную:"
   echo "   ~/.local/bin/bind-ssh-key --pick"
   echo
-  echo "8. Доступ к приватным файлам:"
+  echo "9. Доступ к приватным файлам:"
   echo "   ~/.local/bin/arch-access"
   echo
-  echo "9. Обновление самого setup-скрипта:"
+  echo "10. Обновление самого setup-скрипта:"
   echo "   ~/.local/bin/update-imba-script"
   echo
-  echo "10. Кастомизация bar без ломки core:"
+  echo "11. Кастомизация bar без ломки core:"
   echo "   ~/.config/polybar/config.ini"
   echo "   ~/.config/polybar/features.ini"
   echo "   ~/.local/bin/polybar-refresh"
   echo "   ~/.local/bin/polybar-preset"
   echo
-  echo "11. Перезагрузи систему:"
+  echo "12. Перезагрузи систему:"
   echo "   sudo reboot"
   echo
-  echo "12. Главные хоткеи:"
+  echo "13. Главные хоткеи:"
   echo "   Alt+Return         -> терминал в тайлинге"
   echo "   Alt+Shift+Return   -> ещё один терминал"
   echo "   Alt+d              -> App Deck / выбор приложений"
@@ -3671,6 +3894,7 @@ print_next_steps() {
   echo "   Alt+Ctrl+a         -> arch-access (приватные файлы)"
   echo "   Alt+Ctrl+u         -> обновить setup-скрипт"
   echo "   Alt+Ctrl+w         -> сменить обои"
+  echo "   Alt+Ctrl+x         -> распаковать архив"
   echo "   Print              -> скриншот всего экрана"
   echo "   Shift+Print        -> скриншот выделенной области"
   echo "   Ctrl+Print         -> скриншот активного окна"
@@ -3682,6 +3906,7 @@ print_next_steps() {
   echo "Верхняя панель теперь ближе к macOS-стилю: обязательные иконки Wi-Fi/Bluetooth/Settings плюс кастомизируемые модули."
   echo "Что показывать в bar можно выбрать через ~/.config/polybar/features.ini и применить ~/.local/bin/polybar-refresh."
   echo "Через ~/.local/bin/polybar-preset можно моментально включить monitoring-профиль с CPU/RAM."
+  echo "Распаковка архивов: ~/.local/bin/extract-any (zip/rar/7z/tar и другие форматы)."
   echo "Темы интерфейса переключаются через ~/.local/bin/imba-theme (ocean/sunset/forest/nord/graphite)."
   echo "Скриншоты: ~/.local/bin/take-screenshot (--full/--area/--window/--pick)."
   echo "Правый клик по ключевым модулям bar открывает новое контекстное меню."
@@ -3711,6 +3936,7 @@ main() {
   write_update_script
   write_self_update_script
   write_wallpaper_scripts
+  write_extract_script
   write_screenshot_script
   write_monitor_layout_script
   write_input_devices_script
