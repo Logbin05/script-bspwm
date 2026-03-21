@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+target="${HOME}/.local/bin/imba-theme"
+if [[ ! -x "${target}" ]]; then
+  printf '[ERROR] %s not found. Run ./script.sh first.\n' "${target}" >&2
+  exit 1
+fi
+
+exec "${target}" "$@"
