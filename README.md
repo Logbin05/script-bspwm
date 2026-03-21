@@ -16,11 +16,38 @@
 - helper для распаковки архивов (`zip/rar/7z/tar/...`): `~/.local/bin/extract-any --pick`
 - helper для скриншотов: весь экран, область или активное окно (`~/.local/bin/take-screenshot`)
 - переключение готовых тем интерфейса (`ocean/sunset/forest/nord/graphite`) через `~/.local/bin/imba-theme`
+- абстракция файлового менеджера через `~/.local/bin/open-file-manager` (`FILE_MANAGER=thunar|yazi|custom`)
 - поддержка 2+ мониторов: авто-раскладка рабочих столов и запуск bar на каждом мониторе
 - поддержка трекпадов: tap-to-click, natural scroll и libinput-tweaks
 - команда `~/.local/bin/arch-access` для доступа к приватным файлам и директориям через `sudoedit`/root-shell
 - мягкие fade/blur/shadow-эффекты через `picom`
 - прозрачный `Alacritty`, тёмные уведомления `dunst`, минималистичные иконки и единая палитра
+
+## Архитектура проекта
+
+```text
+script.sh                 # orchestration only
+lib/
+  legacy.sh              # текущая реализация функций (временный compatibility layer)
+  packages.sh            # пакеты, сервисы, bootstrap/finalize
+  theme.sh               # генерация темы и конфигов
+  ui.sh                  # окна/menus/hotkeys и desktop UX
+  access.sh              # arch-access, ssh-agent, avatar runtime
+templates/
+  polybar/
+  rofi/
+  gtk/
+  dunst/
+  picom/
+  alacritty/
+bin/
+  imba-apply-theme
+  imba-control-center
+  open-file-manager
+  arch-access
+```
+
+`script.sh` теперь только оркестрирует фазы. Это упрощает дальнейший переход от `legacy.sh` к полностью модульной реализации без поломки текущего поведения.
 
 ## Запуск
 
@@ -71,7 +98,7 @@ sudo reboot
 - `Alt+Shift+p` или `Super+Shift+p` -> питание
 - `Alt+Ctrl+p` или `Super+Ctrl+p` -> применить `Polybar` из `features.ini`
 - `Alt+b` или `Super+b` -> Firefox
-- `Alt+e` или `Super+e` -> Thunar
+- `Alt+e` или `Super+e` -> File Manager (`~/.local/bin/open-file-manager`)
 - `Alt+q` или `Super+q` -> закрыть окно
 - `Alt+Ctrl+b` или `Super+Ctrl+b` -> перезапуск `polybar`
 - `Alt+Ctrl+c` или `Super+Ctrl+c` -> контекстное меню bar
@@ -147,6 +174,22 @@ sudo reboot
 
 ```bash
 ~/.local/bin/arch-access /etc/pacman.conf
+```
+
+## Файловый менеджер
+
+Все бинды и меню используют единый wrapper:
+
+```bash
+~/.local/bin/open-file-manager
+```
+
+Примеры:
+
+```bash
+~/.local/bin/open-file-manager --path ~/Downloads
+~/.local/bin/open-file-manager --select ~/Downloads/archive.zip
+FILE_MANAGER=yazi ~/.local/bin/open-file-manager
 ```
 
 ## Кастомизация Polybar
