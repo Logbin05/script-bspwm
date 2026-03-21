@@ -3,9 +3,11 @@
 Скрипт `script.sh` поднимает аккуратный `bspwm`-desktop с цельным визуальным стилем:
 
 - минималистичный и акцентный `polybar`: рабочие столы, активное окно, звук, Wi-Fi, Bluetooth, дата, обновления, трей и power
+- обязательные иконки в bar: `Wi-Fi`, `Bluetooth`, `Settings` (macOS-like подача)
 - компактные столы `1..n` в баре и отдельный индикатор текущего рабочего стола сбоку
 - стабильное контекстное меню bar (right-click + fallback через `yad`, если `rofi` не открылся)
 - отдельный `~/.config/polybar/user.ini` для кастомизации bar без правки core-конфига
+- отдельный `~/.config/polybar/features.ini` с toggles того, какую инфу показывать в bar
 - быстрые пресеты бара через `~/.local/bin/polybar-preset` (`focus`, `balanced`, `monitoring`)
 - `App Deck` для выбора приложений через красивую сетку `rofi`
 - `quick hub`, отдельные окна настроек приложений и системных настроек
@@ -13,6 +15,7 @@
 - `ssh-agent`, привязанный к учётке, плюс helper для привязки SSH ключа без ручного запуска агента
 - helper для установки своих обоев: `~/.local/bin/set-wallpaper --pick`
 - поддержка 2+ мониторов: авто-раскладка рабочих столов и запуск bar на каждом мониторе
+- поддержка трекпадов: tap-to-click, natural scroll и libinput-tweaks
 - команда `~/.local/bin/arch-access` для доступа к приватным файлам и директориям через `sudoedit`/root-shell
 - мягкие fade/blur/shadow-эффекты через `picom`
 - прозрачный `Alacritty`, тёмные уведомления `dunst`, минималистичные иконки и единая палитра
@@ -37,6 +40,7 @@ sudo reboot
 - `Alt+s` откроет системные настройки
 - `Alt+,` откроет настройки приложений
 - `Alt+Shift+p` откроет power menu
+- `Alt+Ctrl+p` применит bar по `~/.config/polybar/features.ini`
 - `Alt+Shift+l` откроет новый кастомный lock screen
 - `Alt+Ctrl+a` откроет `arch-access` для приватных файлов
 - `Alt+Ctrl+u` проверит обновления самого setup-скрипта
@@ -59,6 +63,7 @@ sudo reboot
 - `Alt+s` или `Super+s` -> системные настройки
 - `Alt+,` или `Super+,` -> настройки приложений
 - `Alt+Shift+p` или `Super+Shift+p` -> питание
+- `Alt+Ctrl+p` или `Super+Ctrl+p` -> применить `Polybar` из `features.ini`
 - `Alt+b` или `Super+b` -> Firefox
 - `Alt+e` или `Super+e` -> Thunar
 - `Alt+q` или `Super+q` -> закрыть окно
@@ -138,12 +143,24 @@ sudo reboot
 ~/.config/polybar/user.ini
 ```
 
+Тогглы модулей, чтобы реально выбрать какую инфу показывать в bar:
+
+```text
+~/.config/polybar/features.ini
+```
+
 В `user.ini` можно менять:
 
 - высоту/радиус/отступы бара
 - набор модулей слева/в центре/справа
 - акцентные цвета
 - формат времени и длину заголовка окна
+
+После правок `features.ini` применить:
+
+```bash
+~/.local/bin/polybar-refresh
+```
 
 Быстрый выбор готового профиля:
 
@@ -181,3 +198,13 @@ sudo reboot
 ~/.local/bin/apply-monitor-layout
 ~/.local/bin/launch-polybar
 ```
+
+## Трекпад
+
+Для трекпада есть helper:
+
+```bash
+~/.local/bin/configure-input-devices
+```
+
+Он включает `tap-to-click`, `natural scrolling` и `disable while typing` для найденных touchpad/trackpad устройств.

@@ -61,9 +61,9 @@ done || true)"
 BATTERY_NAME="${BATTERY_NAME:-BAT0}"
 AC_NAME="${AC_NAME:-AC}"
 
-POLYBAR_RIGHT_MODULES="current-desktop pulseaudio network bluetooth date updates tray power"
+POLYBAR_RIGHT_MODULES="current-desktop wifi-icon bluetooth-icon control updates pulseaudio date tray power"
 if [[ -d "/sys/class/power_supply/${BATTERY_NAME}" ]]; then
-  POLYBAR_RIGHT_MODULES="current-desktop pulseaudio network bluetooth battery date updates tray power"
+  POLYBAR_RIGHT_MODULES="current-desktop wifi-icon bluetooth-icon control updates pulseaudio battery date tray power"
 fi
 
 PACKAGES=(
@@ -106,6 +106,8 @@ PACKAGES=(
   ttf-jetbrains-mono-nerd
   wireplumber
   xdotool
+  xf86-input-libinput
+  xorg-xinput
   xorg-server
   xorg-xinit
   xorg-xrandr
@@ -123,9 +125,12 @@ BACKUP_TARGETS=(
   "${CONFIG_DIR}/picom/picom.conf"
   "${CONFIG_DIR}/polybar/config.ini"
   "${CONFIG_DIR}/polybar/fallback.ini"
+  "${CONFIG_DIR}/polybar/features.ini"
   "${CONFIG_DIR}/polybar/user.ini"
   "${CONFIG_DIR}/polybar/scripts/network-status"
+  "${CONFIG_DIR}/polybar/scripts/network-icon"
   "${CONFIG_DIR}/polybar/scripts/bluetooth-status"
+  "${CONFIG_DIR}/polybar/scripts/bluetooth-icon"
   "${CONFIG_DIR}/polybar/scripts/current-desktop-status"
   "${CONFIG_DIR}/polybar/scripts/updates-status"
   "${CONFIG_DIR}/rofi/config.rasi"
@@ -139,12 +144,14 @@ BACKUP_TARGETS=(
   "${LOCAL_BIN}/app-settings"
   "${LOCAL_BIN}/arch-access"
   "${LOCAL_BIN}/bar-context-menu"
+  "${LOCAL_BIN}/configure-input-devices"
   "${LOCAL_BIN}/control-center"
   "${LOCAL_BIN}/dropdown-terminal"
   "${LOCAL_BIN}/launch-polybar"
   "${LOCAL_BIN}/lock-screen"
   "${LOCAL_BIN}/open-app-launcher"
   "${LOCAL_BIN}/power-menu"
+  "${LOCAL_BIN}/polybar-refresh"
   "${LOCAL_BIN}/polybar-preset"
   "${LOCAL_BIN}/bind-ssh-key"
   "${LOCAL_BIN}/set-wallpaper"
@@ -728,6 +735,161 @@ EOF
   chmod +x "${LOCAL_BIN}/apply-monitor-layout"
 }
 
+write_input_devices_script() {
+  cat > "${LOCAL_BIN}/configure-input-devices" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if ! command -v xinput >/dev/null 2>&1; then
+  exit 0
+fi
+
+mapfile -t touchpads < <(
+  xinput list --name-only 2>/dev/null |
+    grep -Ei 'touchpad|trackpad|synaptics|elan|glidepoint' || true
+)
+
+for device in "${touchpads[@]}"; do
+  xinput set-prop "${device}" "libinput Tapping Enabled" 1 >/dev/null 2>&1 || true
+  xinput set-prop "${device}" "libinput Natural Scrolling Enabled" 1 >/dev/null 2>&1 || true
+  xinput set-prop "${device}" "libinput Disable While Typing Enabled" 1 >/dev/null 2>&1 || true
+  xinput set-prop "${device}" "libinput Tapping Drag Enabled" 1 >/dev/null 2>&1 || true
+done
+EOF
+
+  chmod +x "${LOCAL_BIN}/configure-input-devices"
+}
+
+write_polybar_features_config() {
+  if [[ -f "${CONFIG_DIR}/polybar/features.ini" ]]; then
+    return
+  fi
+
+  cat > "${CONFIG_DIR}/polybar/features.ini" <<'EOF'
+# Polybar feature toggles (true/false/auto).
+# Обязательные иконки wifi/bluetooth/settings включены всегда.
+
+show_workspaces=true
+show_window_title=true
+show_current_desktop=true
+show_updates=true
+show_audio=true
+show_cpu=false
+show_memory=false
+show_network_text=false
+show_bluetooth_text=false
+show_battery=auto
+show_date=true
+show_tray=true
+show_power=true
+EOF
+}
+
+write_polybar_refresh_script() {
+  cat > "${LOCAL_BIN}/polybar-refresh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+features_file="${HOME}/.config/polybar/features.ini"
+user_file="${HOME}/.config/polybar/user.ini"
+mark_begin="# >>> IMBA BAR FEATURES >>>"
+mark_end="# <<< IMBA BAR FEATURES <<<"
+
+get_value() {
+  local key="$1"
+  local default="$2"
+  local value=""
+
+  if [[ -f "${features_file}" ]]; then
+    value="$(
+      awk -F= -v key="${key}" '
+        $0 ~ /^[[:space:]]*#/ { next }
+        NF < 2 { next }
+        {
+          k=$1
+          gsub(/[[:space:]]/, "", k)
+          if (tolower(k) == tolower(key)) {
+            v=$2
+            sub(/^[[:space:]]*/, "", v)
+            sub(/[[:space:]]*$/, "", v)
+            print tolower(v)
+          }
+        }
+      ' "${features_file}" | tail -n 1
+    )"
+  fi
+
+  [[ -n "${value}" ]] || value="${default}"
+  printf '%s' "${value}"
+}
+
+has_battery() {
+  local d
+  for d in /sys/class/power_supply/*; do
+    [[ -f "${d}/type" ]] || continue
+    if grep -qx "Battery" "${d}/type"; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+modules_left=(launcher)
+modules_center=()
+modules_right=(wifi-icon bluetooth-icon control)
+
+[[ "$(get_value show_workspaces true)" == "true" ]] && modules_left+=(bspwm)
+[[ "$(get_value show_window_title true)" == "true" ]] && modules_center+=(xwindow)
+[[ "$(get_value show_current_desktop true)" == "true" ]] && modules_right=(current-desktop "${modules_right[@]}")
+[[ "$(get_value show_updates true)" == "true" ]] && modules_right+=(updates)
+[[ "$(get_value show_audio true)" == "true" ]] && modules_right+=(pulseaudio)
+[[ "$(get_value show_cpu false)" == "true" ]] && modules_right+=(cpu)
+[[ "$(get_value show_memory false)" == "true" ]] && modules_right+=(memory)
+[[ "$(get_value show_network_text false)" == "true" ]] && modules_right+=(network)
+[[ "$(get_value show_bluetooth_text false)" == "true" ]] && modules_right+=(bluetooth)
+
+battery_mode="$(get_value show_battery auto)"
+if [[ "${battery_mode}" == "true" ]] || ([[ "${battery_mode}" == "auto" ]] && has_battery); then
+  modules_right+=(battery)
+fi
+
+[[ "$(get_value show_date true)" == "true" ]] && modules_right+=(date)
+[[ "$(get_value show_tray true)" == "true" ]] && modules_right+=(tray)
+[[ "$(get_value show_power true)" == "true" ]] && modules_right+=(power)
+
+mkdir -p "${HOME}/.config/polybar"
+touch "${user_file}"
+
+tmp_file="$(mktemp)"
+trap 'rm -f "${tmp_file}"' EXIT
+
+awk -v begin="${mark_begin}" -v end="${mark_end}" '
+  $0 == begin { skip=1; next }
+  $0 == end { skip=0; next }
+  !skip { print }
+' "${user_file}" > "${tmp_file}"
+
+{
+  cat "${tmp_file}"
+  [[ -s "${tmp_file}" ]] && printf '\n'
+  printf '%s\n' "${mark_begin}"
+  printf '%s\n' "[ui]"
+  printf 'modules-left = %s\n' "${modules_left[*]}"
+  printf 'modules-center = %s\n' "${modules_center[*]}"
+  printf 'modules-right = %s\n' "${modules_right[*]}"
+  printf '%s\n' "${mark_end}"
+} > "${user_file}"
+
+"${HOME}/.local/bin/launch-polybar" >/dev/null 2>&1 || true
+
+if command -v notify-send >/dev/null 2>&1 && [[ -n "${DISPLAY:-}" ]]; then
+  notify-send "Polybar refreshed" "Обновил bar по ~/.config/polybar/features.ini"
+fi
+EOF
+
+  chmod +x "${LOCAL_BIN}/polybar-refresh"
+}
+
 write_launcher_script() {
   cat > "${LOCAL_BIN}/open-app-launcher" <<'EOF'
 #!/usr/bin/env bash
@@ -840,6 +1002,7 @@ choices="$(
     '󰒓  Системные настройки' \
     '󰖟  Polybar preset' \
     '󰇚  Polybar custom' \
+    '󰑓  Применить настройки bar' \
     '󰉏  Сменить обои' \
     '󱎓  Приватные файлы (arch-access)' \
     '󰚰  Обновить setup' \
@@ -879,6 +1042,7 @@ case "${choice}" in
   "󰒓  Системные настройки") exec "$HOME/.local/bin/system-settings" ;;
   "󰖟  Polybar preset") exec "$HOME/.local/bin/polybar-preset" ;;
   "󰇚  Polybar custom") exec "$HOME/.local/bin/app-settings" panel-custom ;;
+  "󰑓  Применить настройки bar") exec "$HOME/.local/bin/polybar-refresh" ;;
   "󰉏  Сменить обои") exec "$HOME/.local/bin/set-wallpaper" --pick ;;
   "󱎓  Приватные файлы (arch-access)") exec "$HOME/.local/bin/arch-access" ;;
   "󰚰  Обновить setup") exec "$HOME/.local/bin/update-imba-script" ;;
@@ -902,6 +1066,7 @@ choice="$(
     '󰛳  Настройки приложений' \
     '󰒓  Системные настройки' \
     '󰉏  Сменить обои' \
+    '󰍽  Трекпад' \
     '󱎓  Приватные файлы' \
     '󰚰  Обновить setup' \
     '󰏗  Обновить систему' \
@@ -914,6 +1079,7 @@ case "${choice}" in
   "󰛳  Настройки приложений") exec "$HOME/.local/bin/app-settings" ;;
   "󰒓  Системные настройки") exec "$HOME/.local/bin/system-settings" ;;
   "󰉏  Сменить обои") exec "$HOME/.local/bin/set-wallpaper" --pick ;;
+  "󰍽  Трекпад") exec "$HOME/.local/bin/configure-input-devices" ;;
   "󱎓  Приватные файлы") exec "$HOME/.local/bin/arch-access" ;;
   "󰚰  Обновить setup") exec "$HOME/.local/bin/update-imba-script" ;;
   "󰏗  Обновить систему") exec "$HOME/.local/bin/update-system" ;;
@@ -1115,7 +1281,9 @@ open_target() {
     terminal) open_terminal_editor "$HOME/.config/alacritty/alacritty.toml" ;;
     panel) open_terminal_editor "$HOME/.config/polybar/config.ini" ;;
     panel-custom) open_terminal_editor "$HOME/.config/polybar/user.ini" ;;
+    panel-features) open_terminal_editor "$HOME/.config/polybar/features.ini" ;;
     panel-preset) exec "$HOME/.local/bin/polybar-preset" ;;
+    panel-refresh) exec "$HOME/.local/bin/polybar-refresh" ;;
     launcher) open_terminal_editor "$HOME/.config/rofi/launcher.rasi" ;;
     notifications) open_terminal_editor "$HOME/.config/dunst/dunstrc" ;;
     compositor) open_terminal_editor "$HOME/.config/picom/picom.conf" ;;
@@ -1144,6 +1312,8 @@ choice="$(
     "Alacritty" "Конфиг прозрачности, шрифта и цветов" \
     "Polybar" "Главный конфиг информативного хедбара" \
     "Polybar Custom" "Твой личный слой кастомизации bar без правки core" \
+    "Polybar Features" "Тогглы модулей через ~/.config/polybar/features.ini" \
+    "Polybar Refresh" "Применить toggles и перезапустить bar" \
     "Polybar Preset" "Быстрый выбор профиля: focus/balanced/monitoring" \
     "Rofi Launcher" "Сетка приложений и quick hub" \
     "Dunst" "Уведомления и их оформление" \
@@ -1160,6 +1330,8 @@ case "${selection}" in
   Alacritty) open_target terminal ;;
   Polybar) open_target panel ;;
   "Polybar Custom") open_target panel-custom ;;
+  "Polybar Features") open_target panel-features ;;
+  "Polybar Refresh") open_target panel-refresh ;;
   "Polybar Preset") open_target panel-preset ;;
   "Rofi Launcher") open_target launcher ;;
   Dunst) open_target notifications ;;
@@ -1183,7 +1355,9 @@ open_target() {
     audio) exec pavucontrol ;;
     display) exec arandr ;;
     display-layout) exec "$HOME/.local/bin/apply-monitor-layout" ;;
+    trackpad) exec "$HOME/.local/bin/configure-input-devices" ;;
     bar) exec "$HOME/.local/bin/app-settings" panel-custom ;;
+    bar-refresh) exec "$HOME/.local/bin/polybar-refresh" ;;
     appearance) exec lxappearance ;;
     wallpaper) exec "$HOME/.local/bin/set-wallpaper" --pick ;;
     avatar) exec "$HOME/.local/bin/set-user-avatar" --pick ;;
@@ -1217,8 +1391,10 @@ choice="$(
     "Звук" "Выходы, входы и уровни громкости" \
     "Мониторы" "Положение экранов и разрешение" \
     "Обновить layout мониторов" "Переразложить рабочие столы для 2+ мониторов" \
+    "Трекпад" "Включить tap-to-click, natural scroll и libinput tweaks" \
     "Обои" "Поставить свои обои и применить сразу" \
     "Polybar" "Быстрая настройка bar и пресетов" \
+    "Применить Polybar" "Прочитать features.ini и обновить bar" \
     "Внешний вид" "GTK-тема, иконки, курсор и шрифты" \
     "Аватар" "Фото пользователя для greeter и lock screen" \
     "SSH ключ" "Привязка SSH ключа к учётке и авто-agent" \
@@ -1238,8 +1414,10 @@ case "${selection}" in
   Звук) open_target audio ;;
   Мониторы) open_target display ;;
   "Обновить layout мониторов") open_target display-layout ;;
+  Трекпад) open_target trackpad ;;
   Обои) open_target wallpaper ;;
   Polybar) open_target bar ;;
+  "Применить Polybar") open_target bar-refresh ;;
   "Внешний вид") open_target appearance ;;
   Аватар) open_target avatar ;;
   "SSH ключ") open_target ssh ;;
@@ -1304,6 +1482,41 @@ fi
 printf '󰤮\n'
 EOF
 
+  cat > "${CONFIG_DIR}/polybar/scripts/network-icon" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+active_wifi="$(
+  nmcli -t -f IN-USE,SIGNAL dev wifi 2>/dev/null |
+    awk -F: '$1=="*" {print $2; exit}' || true
+)"
+wired_state="$(
+  nmcli -t -f TYPE,STATE dev status 2>/dev/null |
+    awk -F: '$1=="ethernet" && $2=="connected" {print "yes"; exit}' || true
+)"
+
+if [[ -n "${active_wifi}" ]]; then
+  signal="${active_wifi}"
+  if (( signal >= 75 )); then
+    printf '󰤨\n'
+  elif (( signal >= 50 )); then
+    printf '󰤥\n'
+  elif (( signal >= 25 )); then
+    printf '󰤢\n'
+  else
+    printf '󰤟\n'
+  fi
+  exit 0
+fi
+
+if [[ "${wired_state:-no}" == "yes" ]]; then
+  printf '󰈀\n'
+  exit 0
+fi
+
+printf '󰤮\n'
+EOF
+
   cat > "${CONFIG_DIR}/polybar/scripts/bluetooth-status" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -1337,6 +1550,33 @@ device="$(
 
 if [[ -n "${device}" ]]; then
   printf '󰂱 %s\n' "$(trim_label "${device}")"
+  exit 0
+fi
+
+printf '󰂯\n'
+EOF
+
+  cat > "${CONFIG_DIR}/polybar/scripts/bluetooth-icon" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+powered="$(
+  bluetoothctl show 2>/dev/null |
+    awk -F': ' '/Powered:/ {print $2; exit}' || true
+)"
+
+if [[ "${powered:-no}" != "yes" ]]; then
+  printf '󰂲\n'
+  exit 0
+fi
+
+connected="$(
+  bluetoothctl devices Connected 2>/dev/null |
+    head -n 1 || true
+)"
+
+if [[ -n "${connected}" ]]; then
+  printf '󰂱\n'
   exit 0
 fi
 
@@ -1378,7 +1618,9 @@ EOF
 
   chmod +x \
     "${CONFIG_DIR}/polybar/scripts/network-status" \
+    "${CONFIG_DIR}/polybar/scripts/network-icon" \
     "${CONFIG_DIR}/polybar/scripts/bluetooth-status" \
+    "${CONFIG_DIR}/polybar/scripts/bluetooth-icon" \
     "${CONFIG_DIR}/polybar/scripts/current-desktop-status" \
     "${CONFIG_DIR}/polybar/scripts/updates-status"
 }
@@ -1405,7 +1647,7 @@ padding-right = 1
 module-margin = 0
 modules-left = launcher bspwm
 modules-center = xwindow
-modules-right = current-desktop pulseaudio network bluetooth date updates tray power
+modules-right = current-desktop wifi-icon bluetooth-icon control updates pulseaudio date tray power
 
 [colors]
 primary = #84D8C2
@@ -1424,7 +1666,11 @@ time = %H:%M
 
 ; Пример минималистичного профиля:
 ; [ui]
-; modules-right = current-desktop pulseaudio network battery date updates power
+; modules-right = wifi-icon bluetooth-icon control pulseaudio date power
+
+; Тогглы модулей (удобнее, чем руками перечислять модули):
+; ~/.config/polybar/features.ini
+; ~/.local/bin/polybar-refresh
 
 ; Быстрый выбор профиля без ручной правки:
 ; ~/.local/bin/polybar-preset
@@ -1446,7 +1692,7 @@ font-0 = JetBrainsMono Nerd Font:size=10;2
 font-1 = Noto Color Emoji:size=10;1
 modules-left = launcher bspwm
 modules-center = xwindow
-modules-right = pulseaudio date power
+modules-right = wifi-icon bluetooth-icon control pulseaudio date power
 wm-restack = bspwm
 enable-ipc = true
 cursor-click = pointer
@@ -1478,6 +1724,32 @@ label-urgent-padding = 1
 type = internal/xwindow
 label = %title:0:52:...%
 label-empty = workspace
+
+[module/wifi-icon]
+type = custom/script
+exec = ~/.config/polybar/scripts/network-icon
+interval = 5
+format-padding = 1
+click-left = ~/.local/bin/system-settings network
+click-right = ~/.local/bin/bar-context-menu
+click-middle = nm-connection-editor
+
+[module/bluetooth-icon]
+type = custom/script
+exec = ~/.config/polybar/scripts/bluetooth-icon
+interval = 8
+format-padding = 1
+click-left = ~/.local/bin/system-settings bluetooth
+click-right = ~/.local/bin/bar-context-menu
+click-middle = blueman-manager
+
+[module/control]
+type = custom/text
+content = 󰒓
+content-padding = 1
+content-foreground = #F3C782
+click-left = ~/.local/bin/control-center
+click-right = ~/.local/bin/bar-context-menu
 
 [module/pulseaudio]
 type = internal/pulseaudio
@@ -1543,15 +1815,15 @@ fi
 
 case "${preset}" in
   balanced)
-    modules_right="current-desktop pulseaudio network bluetooth${battery_module} date updates tray power"
+    modules_right="current-desktop wifi-icon bluetooth-icon control updates pulseaudio${battery_module} date tray power"
     title_len="46"
     ;;
   focus)
-    modules_right="current-desktop pulseaudio network${battery_module} date power"
+    modules_right="wifi-icon bluetooth-icon control pulseaudio${battery_module} date power"
     title_len="58"
     ;;
   monitoring)
-    modules_right="current-desktop cpu memory pulseaudio network bluetooth${battery_module} date updates tray power"
+    modules_right="current-desktop wifi-icon bluetooth-icon control updates cpu memory pulseaudio${battery_module} date tray power"
     title_len="40"
     ;;
   *)
@@ -1600,6 +1872,7 @@ pgrep -x sxhkd >/dev/null || sxhkd &
 pgrep -x picom >/dev/null || picom --config "$HOME/.config/picom/picom.conf" &
 pgrep -x dunst >/dev/null || dunst &
 pgrep -x xss-lock >/dev/null || xss-lock --transfer-sleep-lock -- "$HOME/.local/bin/lock-screen" &
+"$HOME/.local/bin/configure-input-devices" >/dev/null 2>&1 || true
 
 xsetroot -cursor_name left_ptr
 xset s 300 300
@@ -1692,6 +1965,13 @@ super + shift + p
 
 alt + shift + p
     ~/.local/bin/power-menu
+
+# apply polybar feature toggles
+super + ctrl + p
+    ~/.local/bin/polybar-refresh
+
+alt + ctrl + p
+    ~/.local/bin/polybar-refresh
 
 # browser
 super + b
@@ -1975,6 +2255,28 @@ format-foreground = \${colors.accent}
 format-padding = 1
 click-left = ~/.local/bin/update-system
 click-right = ~/.local/bin/bar-context-menu
+
+[module/wifi-icon]
+type = custom/script
+exec = ~/.config/polybar/scripts/network-icon
+interval = 5
+format-background = \${colors.surface}
+format-foreground = \${colors.foreground}
+format-padding = 1
+click-left = ~/.local/bin/system-settings network
+click-right = ~/.local/bin/bar-context-menu
+click-middle = nm-connection-editor
+
+[module/bluetooth-icon]
+type = custom/script
+exec = ~/.config/polybar/scripts/bluetooth-icon
+interval = 8
+format-background = \${colors.surface}
+format-foreground = \${colors.foreground}
+format-padding = 1
+click-left = ~/.local/bin/system-settings bluetooth
+click-right = ~/.local/bin/bar-context-menu
+click-middle = blueman-manager
 
 [module/cpu]
 type = internal/cpu
@@ -2625,23 +2927,28 @@ print_next_steps() {
   echo "3. Если хочешь поставить свои обои:"
   echo "   ~/.local/bin/set-wallpaper --pick"
   echo
-  echo "4. Если хочешь привязать свой SSH ключ вручную:"
+  echo "4. Если нужен ручной твик трекпада:"
+  echo "   ~/.local/bin/configure-input-devices"
+  echo
+  echo "5. Если хочешь привязать свой SSH ключ вручную:"
   echo "   ~/.local/bin/bind-ssh-key --pick"
   echo
-  echo "5. Доступ к приватным файлам:"
+  echo "6. Доступ к приватным файлам:"
   echo "   ~/.local/bin/arch-access"
   echo
-  echo "6. Обновление самого setup-скрипта:"
+  echo "7. Обновление самого setup-скрипта:"
   echo "   ~/.local/bin/update-imba-script"
   echo
-  echo "7. Кастомизация bar без ломки core:"
+  echo "8. Кастомизация bar без ломки core:"
   echo "   ~/.config/polybar/user.ini"
+  echo "   ~/.config/polybar/features.ini"
+  echo "   ~/.local/bin/polybar-refresh"
   echo "   ~/.local/bin/polybar-preset"
   echo
-  echo "8. Перезагрузи систему:"
+  echo "9. Перезагрузи систему:"
   echo "   sudo reboot"
   echo
-  echo "9. Главные хоткеи:"
+  echo "10. Главные хоткеи:"
   echo "   Alt+Return         -> терминал в тайлинге"
   echo "   Alt+Shift+Return   -> ещё один терминал"
   echo "   Alt+d              -> App Deck / выбор приложений"
@@ -2650,6 +2957,7 @@ print_next_steps() {
   echo "   Alt+s              -> системные настройки"
   echo "   Alt+,              -> настройки приложений"
   echo "   Alt+Shift+p        -> меню питания"
+  echo "   Alt+Ctrl+p         -> применить Polybar (features.ini)"
   echo "   Alt+b              -> Firefox"
   echo "   Alt+e              -> Thunar"
   echo "   Alt+q              -> закрыть окно"
@@ -2661,7 +2969,8 @@ print_next_steps() {
   echo "   Alt+Shift+l        -> кастомный lock screen (imba)"
   echo "   Alt+Shift+u        -> обновление системы"
   echo
-  echo "Верхняя панель теперь минималистичная, но информативная: звук, сеть, Bluetooth, дата, обновления и быстрые действия."
+  echo "Верхняя панель теперь ближе к macOS-стилю: обязательные иконки Wi-Fi/Bluetooth/Settings плюс кастомизируемые модули."
+  echo "Что показывать в bar можно выбрать через ~/.config/polybar/features.ini и применить ~/.local/bin/polybar-refresh."
   echo "Через ~/.local/bin/polybar-preset можно моментально включить monitoring-профиль с CPU/RAM."
   echo "Правый клик по ключевым модулям bar открывает новое контекстное меню."
   echo "Сессия теперь поднимается через LightDM: есть greeter, поля логина/пароля и аватар пользователя."
@@ -2691,11 +3000,14 @@ main() {
   write_self_update_script
   write_wallpaper_scripts
   write_monitor_layout_script
+  write_input_devices_script
   write_launcher_script
   write_arch_access_script
   write_bar_context_menu_script
   write_control_center_script
   write_power_menu_script
+  write_polybar_features_config
+  write_polybar_refresh_script
   write_polybar_preset_script
   write_avatar_script
   write_ssh_key_script
@@ -2714,6 +3026,7 @@ main() {
   write_gtk_config
   write_x_profile
   write_x_session
+  "${LOCAL_BIN}/polybar-refresh" >/dev/null 2>&1 || true
   done_msg "Новая тема и окружение записаны."
 
   configure_display_manager
@@ -2738,6 +3051,10 @@ main() {
   info "Права владельца"
   fix_permissions
   done_msg "Владельцы файлов выровнены."
+
+  info "Применение твиков трекпада"
+  "${LOCAL_BIN}/configure-input-devices" >/dev/null 2>&1 || true
+  done_msg "Твики трекпада применены."
 
   start_polybar_now
 
