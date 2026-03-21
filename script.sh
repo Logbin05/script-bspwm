@@ -2037,10 +2037,10 @@ alt + q
     bspc node -c
 
 # lock screen
-super + shift + l
+super + ctrl + l
     ~/.local/bin/lock-screen
 
-alt + shift + l
+alt + ctrl + l
     ~/.local/bin/lock-screen
 
 # update system
@@ -3008,7 +3008,7 @@ print_next_steps() {
   echo "   Alt+Ctrl+u         -> обновить setup-скрипт"
   echo "   Alt+Ctrl+w         -> сменить обои"
   echo "   Alt+Ctrl+m         -> обновить layout мониторов + bar"
-  echo "   Alt+Shift+l        -> кастомный lock screen (imba)"
+  echo "   Alt+Ctrl+l         -> кастомный lock screen (imba)"
   echo "   Alt+Shift+u        -> обновление системы"
   echo
   echo "Верхняя панель теперь ближе к macOS-стилю: обязательные иконки Wi-Fi/Bluetooth/Settings плюс кастомизируемые модули."

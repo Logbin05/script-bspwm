@@ -41,7 +41,7 @@ sudo reboot
 - `Alt+,` откроет настройки приложений
 - `Alt+Shift+p` откроет power menu
 - `Alt+Ctrl+p` применит bar по `~/.config/polybar/features.ini`
-- `Alt+Shift+l` откроет новый кастомный lock screen
+- `Alt+Ctrl+l` откроет новый кастомный lock screen
 - `Alt+Ctrl+a` откроет `arch-access` для приватных файлов
 - `Alt+Ctrl+u` проверит обновления самого setup-скрипта
 - `Alt+Ctrl+w` откроет выбор своих обоев
