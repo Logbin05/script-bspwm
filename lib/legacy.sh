@@ -62,9 +62,9 @@ done || true)"
 BATTERY_NAME="${BATTERY_NAME:-BAT0}"
 AC_NAME="${AC_NAME:-AC}"
 
-POLYBAR_RIGHT_MODULES="current-desktop wifi-icon bluetooth-icon control updates pulseaudio date tray power"
+POLYBAR_RIGHT_MODULES="current-desktop layout wifi-icon bluetooth-icon control updates pulseaudio date tray power"
 if [[ -d "/sys/class/power_supply/${BATTERY_NAME}" ]]; then
-  POLYBAR_RIGHT_MODULES="current-desktop wifi-icon bluetooth-icon control updates pulseaudio battery date tray power"
+  POLYBAR_RIGHT_MODULES="current-desktop layout wifi-icon bluetooth-icon control updates pulseaudio battery date tray power"
 fi
 
 PACKAGES=(
@@ -109,6 +109,7 @@ PACKAGES=(
   xdotool
   xf86-input-libinput
   xorg-xinput
+  xorg-setxkbmap
   xorg-server
   xorg-xinit
   xorg-xrandr
@@ -134,6 +135,7 @@ BACKUP_TARGETS=(
   "${CONFIG_DIR}/polybar/scripts/bluetooth-status"
   "${CONFIG_DIR}/polybar/scripts/bluetooth-icon"
   "${CONFIG_DIR}/polybar/scripts/current-desktop-status"
+  "${CONFIG_DIR}/polybar/scripts/layout-status"
   "${CONFIG_DIR}/polybar/scripts/updates-status"
   "${CONFIG_DIR}/rofi/config.rasi"
   "${CONFIG_DIR}/rofi/launcher.rasi"
@@ -151,6 +153,7 @@ BACKUP_TARGETS=(
   "${LOCAL_BIN}/dropdown-terminal"
   "${LOCAL_BIN}/launch-polybar"
   "${LOCAL_BIN}/lock-screen"
+  "${LOCAL_BIN}/toggle-layout"
   "${LOCAL_BIN}/open-file-manager"
   "${LOCAL_BIN}/open-app-launcher"
   "${LOCAL_BIN}/power-menu"
@@ -523,11 +526,13 @@ state_file="${XDG_CONFIG_HOME:-$HOME/.config}/imba-bspwm/source-dir"
 
 usage() {
   cat <<'USAGE'
-Использование: update-imba-script [путь_к_репозиторию]
+Использование: update-imba-script [путь_к_репозиторию] [--apply|--no-apply]
              update-imba-script --set-source <путь_к_репозиторию>
 
 - Без аргументов обновляет репозиторий, который был сохранён установщиком.
 - Можно передать путь до repo вручную.
+- По умолчанию после обновления автоматически запускает ./script.sh.
+- --no-apply: только подтянуть изменения, без применения.
 - Команда работает только в git-репозитории.
 USAGE
 }
@@ -574,26 +579,47 @@ resolve_repo() {
   printf '%s' "$PWD"
 }
 
-arg="${1:-}"
+apply_mode="apply"
+repo_arg=""
 
-case "${arg}" in
-  -h|--help)
-    usage
-    exit 0
-    ;;
-  --set-source)
-    [[ $# -ge 2 ]] || fail "Для --set-source нужен путь к репозиторию."
-    repo_set="${2/#\~/$HOME}"
-    repo_set="$(realpath -m "${repo_set}")"
-    [[ -d "${repo_set}/.git" ]] || fail "Путь не похож на git-репозиторий: ${repo_set}"
-    store_repo "${repo_set}"
-    printf '[OK] Источник обновления сохранён: %s\n' "${repo_set}"
-    notify_msg "Script updater" "Новый источник: ${repo_set}"
-    exit 0
-    ;;
-esac
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --set-source)
+      [[ $# -ge 2 ]] || fail "Для --set-source нужен путь к репозиторию."
+      repo_set="${2/#\~/$HOME}"
+      repo_set="$(realpath -m "${repo_set}")"
+      [[ -d "${repo_set}/.git" ]] || fail "Путь не похож на git-репозиторий: ${repo_set}"
+      store_repo "${repo_set}"
+      printf '[OK] Источник обновления сохранён: %s\n' "${repo_set}"
+      notify_msg "Script updater" "Новый источник: ${repo_set}"
+      exit 0
+      ;;
+    --no-apply)
+      apply_mode="skip"
+      shift
+      ;;
+    --apply)
+      apply_mode="apply"
+      shift
+      ;;
+    -*)
+      fail "Неизвестный флаг: $1"
+      ;;
+    *)
+      if [[ -n "${repo_arg}" ]]; then
+        fail "Передан лишний аргумент: $1"
+      fi
+      repo_arg="$1"
+      shift
+      ;;
+  esac
+done
 
-repo_dir="$(resolve_repo "${arg}")"
+repo_dir="$(resolve_repo "${repo_arg}")"
 repo_dir="${repo_dir/#\~/$HOME}"
 repo_dir="$(realpath -m "${repo_dir}")"
 
@@ -675,6 +701,37 @@ fi
 new_short_sha="$(git -C "${repo_dir}" rev-parse --short HEAD)"
 printf '[OK] Скрипт обновлён до %s\n' "${new_short_sha}"
 notify_msg "Script updater" "Обновлено до ${new_short_sha}"
+
+if [[ "${apply_mode}" == "skip" ]]; then
+  printf '[INFO] Автоприменение отключено (--no-apply).\n'
+  exit 0
+fi
+
+setup_script="${repo_dir}/script.sh"
+[[ -f "${setup_script}" ]] || fail "После обновления не найден script.sh в ${repo_dir}"
+chmod +x "${setup_script}" >/dev/null 2>&1 || true
+
+printf '[INFO] Применяю обновление: запускаю %s\n' "${setup_script}"
+notify_msg "Script updater" "Обновление получено, запускаю применение..."
+
+if [[ -t 1 ]]; then
+  (cd "${repo_dir}" && ./script.sh) || fail "Автоприменение завершилось с ошибкой."
+  printf '[OK] Обновление применено.\n'
+  notify_msg "Script updater" "Обновление успешно применено."
+  exit 0
+fi
+
+if [[ -n "${DISPLAY:-}" ]] && command -v alacritty >/dev/null 2>&1; then
+  printf '[INFO] Открою отдельное окно терминала для применения обновления.\n'
+  repo_q=""
+  printf -v repo_q '%q' "${repo_dir}"
+  alacritty --class settings-editor -e bash -lc "cd ${repo_q}; ./script.sh; status=\$?; echo; if [[ \$status -eq 0 ]]; then echo '[OK] Обновление применено.'; else echo '[ERROR] Автоприменение завершилось с ошибкой.'; fi; read -n 1 -s -r -p 'Нажми любую клавишу для закрытия...'; exit \$status" >/dev/null 2>&1 &
+  exit 0
+fi
+
+(cd "${repo_dir}" && ./script.sh) || fail "Автоприменение завершилось с ошибкой."
+printf '[OK] Обновление применено.\n'
+notify_msg "Script updater" "Обновление успешно применено."
 EOF
 
   chmod +x "${LOCAL_BIN}/update-imba-script"
@@ -1483,6 +1540,42 @@ EOF
   chmod +x "${LOCAL_BIN}/configure-input-devices"
 }
 
+write_layout_scripts() {
+  cat > "${LOCAL_BIN}/toggle-layout" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if ! command -v setxkbmap >/dev/null 2>&1; then
+  printf '[ERROR] setxkbmap not found.\n' >&2
+  exit 1
+fi
+
+primary="${IMBA_LAYOUT_PRIMARY:-us}"
+secondary="${IMBA_LAYOUT_SECONDARY:-ru}"
+
+current="$(
+  setxkbmap -query 2>/dev/null |
+    awk '/layout:/ {print $2; exit}' |
+    cut -d',' -f1 |
+    tr '[:upper:]' '[:lower:]'
+)"
+
+if [[ "${current}" == "${secondary}" ]]; then
+  next="${primary}"
+else
+  next="${secondary}"
+fi
+
+setxkbmap -layout "${next}"
+
+if command -v notify-send >/dev/null 2>&1 && [[ -n "${DISPLAY:-}" ]]; then
+  notify-send "Keyboard layout" "$(printf '%s' "${next}" | tr '[:lower:]' '[:upper:]')"
+fi
+EOF
+
+  chmod +x "${LOCAL_BIN}/toggle-layout"
+}
+
 write_polybar_features_config() {
   if [[ -f "${CONFIG_DIR}/polybar/features.ini" ]]; then
     return
@@ -1495,6 +1588,7 @@ write_polybar_features_config() {
 show_workspaces=true
 show_window_title=true
 show_current_desktop=true
+show_layout=true
 show_updates=true
 show_audio=true
 show_cpu=false
@@ -1681,6 +1775,7 @@ modules_right=(wifi-icon bluetooth-icon control)
 
 [[ "$(get_value show_workspaces true)" == "true" ]] && modules_left+=(bspwm)
 [[ "$(get_value show_window_title true)" == "true" ]] && modules_center+=(xwindow)
+[[ "$(get_value show_layout true)" == "true" ]] && modules_right=(layout "${modules_right[@]}")
 [[ "$(get_value show_current_desktop true)" == "true" ]] && modules_right=(current-desktop "${modules_right[@]}")
 [[ "$(get_value show_updates true)" == "true" ]] && modules_right+=(updates)
 [[ "$(get_value show_audio true)" == "true" ]] && modules_right+=(pulseaudio)
@@ -1938,7 +2033,7 @@ choices="$(
     'Распаковать архив' \
     'Скриншот' \
     'Приватные файлы (arch-access)' \
-    'Обновить setup' \
+    'Обновить setup (auto-apply)' \
     'Перезапустить bar' \
     'Обновить систему' \
     'Меню питания'
@@ -1981,7 +2076,7 @@ case "${choice}" in
   "Распаковать архив") exec "$HOME/.local/bin/extract-any" --pick ;;
   "Скриншот") exec "$HOME/.local/bin/take-screenshot" --pick ;;
   "Приватные файлы (arch-access)") exec "$HOME/.local/bin/arch-access" ;;
-  "Обновить setup") exec "$HOME/.local/bin/update-imba-script" ;;
+  "Обновить setup (auto-apply)") exec "$HOME/.local/bin/update-imba-script" ;;
   "Перезапустить bar") exec "$HOME/.local/bin/launch-polybar" ;;
   "Обновить систему") exec "$HOME/.local/bin/update-system" ;;
   "Меню питания") exec "$HOME/.local/bin/power-menu" ;;
@@ -2007,7 +2102,7 @@ choice="$(
     'Скриншот' \
     'Трекпад' \
     'Приватные файлы' \
-    'Обновить setup' \
+    'Обновить setup (auto-apply)' \
     'Обновить систему' \
     'Меню питания' |
     rofi -dmenu -i -p "hub" -theme "$HOME/.config/rofi/menu.rasi" || true
@@ -2023,7 +2118,7 @@ case "${choice}" in
   "Скриншот") exec "$HOME/.local/bin/take-screenshot" --pick ;;
   "Трекпад") exec "$HOME/.local/bin/configure-input-devices" ;;
   "Приватные файлы") exec "$HOME/.local/bin/arch-access" ;;
-  "Обновить setup") exec "$HOME/.local/bin/update-imba-script" ;;
+  "Обновить setup (auto-apply)") exec "$HOME/.local/bin/update-imba-script" ;;
   "Обновить систему") exec "$HOME/.local/bin/update-system" ;;
   "Меню питания") exec "$HOME/.local/bin/power-menu" ;;
 esac
@@ -2306,6 +2401,7 @@ open_target() {
     audio) exec pavucontrol ;;
     display) exec arandr ;;
     display-layout) exec "$HOME/.local/bin/apply-monitor-layout" ;;
+    layout) exec "$HOME/.local/bin/toggle-layout" ;;
     trackpad) exec "$HOME/.local/bin/configure-input-devices" ;;
     bar) exec "$HOME/.local/bin/app-settings" panel ;;
     bar-refresh) exec "$HOME/.local/bin/polybar-refresh" ;;
@@ -2345,6 +2441,7 @@ choice="$(
     "Звук" "Выходы, входы и уровни громкости" \
     "Мониторы" "Положение экранов и разрешение" \
     "Обновить layout мониторов" "Переразложить рабочие столы для 2+ мониторов" \
+    "Раскладка" "Сменить язык клавиатуры (EN/RU)" \
     "Трекпад" "Включить tap-to-click, natural scroll и libinput tweaks" \
     "Тема интерфейса" "Быстрое переключение готовых тем (ocean/sunset/forest/nord/graphite)" \
     "Обои" "Поставить свои обои и применить сразу" \
@@ -2356,7 +2453,7 @@ choice="$(
     "Аватар" "Фото пользователя для greeter и lock screen" \
     "SSH ключ" "Привязка SSH ключа к учётке и авто-agent" \
     "Приватные файлы" "Открыть защищённые пути через arch-access" \
-    "Обновить setup" "Проверить и подтянуть новую версию script.sh из репозитория" \
+    "Обновить setup" "Проверить обновления и автоматически применить script.sh" \
     "Обновления" "Полное обновление Arch-системы" \
     "Питание" "Lock, suspend, reboot и shutdown" \
     --button="Открыть:0" \
@@ -2371,6 +2468,7 @@ case "${selection}" in
   Звук) open_target audio ;;
   Мониторы) open_target display ;;
   "Обновить layout мониторов") open_target display-layout ;;
+  Раскладка) open_target layout ;;
   Трекпад) open_target trackpad ;;
   "Тема интерфейса") open_target theme ;;
   Обои) open_target wallpaper ;;
@@ -2557,6 +2655,29 @@ fi
 printf '󰆍 %s\n' "${current_desktop}"
 EOF
 
+  cat > "${CONFIG_DIR}/polybar/scripts/layout-status" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if ! command -v setxkbmap >/dev/null 2>&1; then
+  printf '⌨ --\n'
+  exit 0
+fi
+
+layout="$(
+  setxkbmap -query 2>/dev/null |
+    awk '/layout:/ {print $2; exit}' |
+    cut -d',' -f1 |
+    tr '[:upper:]' '[:lower:]'
+)"
+
+case "${layout}" in
+  ru) printf '⌨ RU\n' ;;
+  ua) printf '⌨ UA\n' ;;
+  *) printf '⌨ EN\n' ;;
+esac
+EOF
+
   cat > "${CONFIG_DIR}/polybar/scripts/updates-status" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -2582,6 +2703,7 @@ EOF
     "${CONFIG_DIR}/polybar/scripts/bluetooth-status" \
     "${CONFIG_DIR}/polybar/scripts/bluetooth-icon" \
     "${CONFIG_DIR}/polybar/scripts/current-desktop-status" \
+    "${CONFIG_DIR}/polybar/scripts/layout-status" \
     "${CONFIG_DIR}/polybar/scripts/updates-status"
 }
 
@@ -2621,7 +2743,7 @@ font-0 = JetBrainsMono Nerd Font:size=10;2
 font-1 = Noto Color Emoji:size=10;1
 modules-left = launcher bspwm
 modules-center = xwindow
-modules-right = wifi-icon bluetooth-icon control pulseaudio date power
+modules-right = layout wifi-icon bluetooth-icon control pulseaudio date power
 wm-restack = bspwm
 enable-ipc = true
 cursor-click = pointer
@@ -2671,6 +2793,14 @@ format-padding = 1
 click-left = ~/.local/bin/system-settings bluetooth
 click-right = ~/.local/bin/bar-context-menu
 click-middle = blueman-manager
+
+[module/layout]
+type = custom/script
+exec = ~/.config/polybar/scripts/layout-status
+interval = 1
+format-padding = 1
+click-left = ~/.local/bin/toggle-layout
+click-right = ~/.local/bin/bar-context-menu
 
 [module/control]
 type = custom/text
@@ -2771,6 +2901,7 @@ case "${preset}" in
     set_feature show_workspaces true
     set_feature show_window_title true
     set_feature show_current_desktop true
+    set_feature show_layout true
     set_feature show_updates true
     set_feature show_audio true
     set_feature show_cpu false
@@ -2787,6 +2918,7 @@ case "${preset}" in
     set_feature show_workspaces true
     set_feature show_window_title true
     set_feature show_current_desktop false
+    set_feature show_layout true
     set_feature show_updates false
     set_feature show_audio true
     set_feature show_cpu false
@@ -2803,6 +2935,7 @@ case "${preset}" in
     set_feature show_workspaces true
     set_feature show_window_title true
     set_feature show_current_desktop true
+    set_feature show_layout true
     set_feature show_updates true
     set_feature show_audio true
     set_feature show_cpu true
@@ -2991,6 +3124,13 @@ super + ctrl + t
 
 alt + ctrl + t
     ~/.local/bin/imba-theme --pick
+
+# switch keyboard layout
+super + space
+    ~/.local/bin/toggle-layout
+
+alt + space
+    ~/.local/bin/toggle-layout
 
 # close focused window
 super + q
@@ -3234,6 +3374,16 @@ format-foreground = \${colors.secondary}
 format-padding = 1
 click-right = ~/.local/bin/bar-context-menu
 
+[module/layout]
+type = custom/script
+exec = ~/.config/polybar/scripts/layout-status
+interval = 1
+format-background = \${colors.surface}
+format-foreground = \${colors.foreground}
+format-padding = 1
+click-left = ~/.local/bin/toggle-layout
+click-right = ~/.local/bin/bar-context-menu
+
 [module/xwindow]
 type = internal/xwindow
 format-background = \${colors.surface-alt}
@@ -3359,15 +3509,10 @@ format-charging = <label-charging>
 format-discharging = <label-discharging>
 format-full = <label-full>
 format-low = <label-low>
-label-charging = 󰂄 %percentage%%
-label-discharging = <ramp-capacity> %percentage%%
-label-full = 󰁹 %percentage%%
-label-low = 󰂃 %percentage%%
-ramp-capacity-0 = 󰂎
-ramp-capacity-1 = 󰁻
-ramp-capacity-2 = 󰁽
-ramp-capacity-3 = 󰁿
-ramp-capacity-4 = 󰂁
+label-charging = ⚡ %percentage%%
+label-discharging = 🔋 %percentage%%
+label-full = 🔋 %percentage%%
+label-low = 🪫 %percentage%%
 
 [module/date]
 type = internal/date
@@ -3949,25 +4094,28 @@ print_next_steps() {
   echo "7. Если хочешь быстро сменить тему:"
   echo "   ~/.local/bin/imba-theme --pick"
   echo
-  echo "8. Если хочешь привязать свой SSH ключ вручную:"
+  echo "8. Если хочешь переключить раскладку вручную:"
+  echo "   ~/.local/bin/toggle-layout"
+  echo
+  echo "9. Если хочешь привязать свой SSH ключ вручную:"
   echo "   ~/.local/bin/bind-ssh-key --pick"
   echo
-  echo "9. Доступ к приватным файлам:"
+  echo "10. Доступ к приватным файлам:"
   echo "   ~/.local/bin/arch-access"
   echo
-  echo "10. Обновление самого setup-скрипта:"
+  echo "11. Обновление самого setup-скрипта:"
   echo "   ~/.local/bin/update-imba-script"
   echo
-  echo "11. Кастомизация bar без ломки core:"
+  echo "12. Кастомизация bar без ломки core:"
   echo "   ~/.config/polybar/config.ini"
   echo "   ~/.config/polybar/features.ini"
   echo "   ~/.local/bin/polybar-refresh"
   echo "   ~/.local/bin/polybar-preset"
   echo
-  echo "12. Перезагрузи систему:"
+  echo "13. Перезагрузи систему:"
   echo "   sudo reboot"
   echo
-  echo "13. Главные хоткеи:"
+  echo "14. Главные хоткеи:"
   echo "   Alt+Return         -> терминал в тайлинге"
   echo "   Alt+Shift+Return   -> ещё один терминал"
   echo "   Alt+d              -> App Deck / выбор приложений"
@@ -3988,6 +4136,7 @@ print_next_steps() {
   echo "   Print              -> скриншот всего экрана"
   echo "   Shift+Print        -> скриншот выделенной области"
   echo "   Ctrl+Print         -> скриншот активного окна"
+  echo "   Alt+Space          -> сменить раскладку"
   echo "   Alt+Ctrl+t         -> сменить тему интерфейса"
   echo "   Alt+Ctrl+m         -> обновить layout мониторов + bar"
   echo "   Alt+Ctrl+l         -> кастомный lock screen (imba)"
@@ -4030,6 +4179,7 @@ main() {
   write_screenshot_script
   write_monitor_layout_script
   write_input_devices_script
+  write_layout_scripts
   write_theme_script
   write_launcher_script
   write_open_file_manager_script
