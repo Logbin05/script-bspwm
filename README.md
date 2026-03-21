@@ -13,6 +13,8 @@
 - полностью кастомный `lock screen` на `i3lock`: blur фон, время/дата, акцентные состояния, аватар и fallback на greeter
 - `ssh-agent`, привязанный к учётке, плюс helper для привязки SSH ключа без ручного запуска агента
 - helper для установки своих обоев: `~/.local/bin/set-wallpaper --pick`
+- helper для скриншотов: весь экран, область или активное окно (`~/.local/bin/take-screenshot`)
+- переключение готовых тем интерфейса (`ocean/sunset/forest/nord/graphite`) через `~/.local/bin/imba-theme`
 - поддержка 2+ мониторов: авто-раскладка рабочих столов и запуск bar на каждом мониторе
 - поддержка трекпадов: tap-to-click, natural scroll и libinput-tweaks
 - команда `~/.local/bin/arch-access` для доступа к приватным файлам и директориям через `sudoedit`/root-shell
@@ -44,6 +46,8 @@ sudo reboot
 - `Alt+Ctrl+a` откроет `arch-access` для приватных файлов
 - `Alt+Ctrl+u` проверит обновления самого setup-скрипта
 - `Alt+Ctrl+w` откроет выбор своих обоев
+- `Print` снимет скриншот всего экрана, `Shift+Print` — области
+- `Alt+Ctrl+t` откроет выбор темы интерфейса
 - `Alt+Ctrl+m` переприменит layout мониторов и перезапустит bar
 - при открытии интерактивного терминала будет показываться `fastfetch`
 - `ssh-agent` будет подниматься как user-service для текущей учётки
@@ -71,6 +75,10 @@ sudo reboot
 - `Alt+Ctrl+a` или `Super+Ctrl+a` -> `arch-access` (приватные файлы)
 - `Alt+Ctrl+u` или `Super+Ctrl+u` -> обновление setup-скрипта
 - `Alt+Ctrl+w` или `Super+Ctrl+w` -> установить свои обои
+- `Print` -> скриншот всего экрана
+- `Shift+Print` -> скриншот выделенной области
+- `Ctrl+Print` -> скриншот активного окна
+- `Alt+Ctrl+t` или `Super+Ctrl+t` -> переключение темы интерфейса
 - `Alt+Ctrl+m` или `Super+Ctrl+m` -> обновить layout мониторов + перезапустить bar
 - `Alt+Shift+u` или `Super+Shift+u` -> обновление системы
 
@@ -186,6 +194,37 @@ sudo reboot
 ```
 
 Обои сохраняются как `~/Pictures/Wallpapers/wallpaper.jpg` и применяются автоматически при старте сессии.
+
+## Скриншоты
+
+Быстрые режимы:
+
+```bash
+~/.local/bin/take-screenshot --full
+~/.local/bin/take-screenshot --area
+~/.local/bin/take-screenshot --window
+~/.local/bin/take-screenshot --pick
+```
+
+Скриншоты сохраняются в `~/Pictures/Screenshots`.
+
+## Темы
+
+Смена темы интерфейса (Polybar + Rofi + Dunst):
+
+```bash
+~/.local/bin/imba-theme --pick
+```
+
+Или сразу выбрать тему командой:
+
+```bash
+~/.local/bin/imba-theme ocean
+~/.local/bin/imba-theme sunset
+~/.local/bin/imba-theme forest
+~/.local/bin/imba-theme nord
+~/.local/bin/imba-theme graphite
+```
 
 ## Мониторы 2+
 

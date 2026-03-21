@@ -45,6 +45,7 @@ USER_HOME="$(getent passwd "${USER_NAME}" | cut -d: -f6)"
 readonly CONFIG_DIR="${USER_HOME}/.config"
 readonly LOCAL_BIN="${USER_HOME}/.local/bin"
 readonly WALL_DIR="${USER_HOME}/Pictures/Wallpapers"
+readonly SHOTS_DIR="${USER_HOME}/Pictures/Screenshots"
 readonly WALLPAPER="${WALL_DIR}/wallpaper.jpg"
 readonly IMBA_STATE_DIR="${CONFIG_DIR}/imba-bspwm"
 readonly SCRIPT_SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -152,6 +153,8 @@ BACKUP_TARGETS=(
   "${LOCAL_BIN}/lock-screen"
   "${LOCAL_BIN}/open-app-launcher"
   "${LOCAL_BIN}/power-menu"
+  "${LOCAL_BIN}/take-screenshot"
+  "${LOCAL_BIN}/imba-theme"
   "${LOCAL_BIN}/polybar-prepare"
   "${LOCAL_BIN}/polybar-refresh"
   "${LOCAL_BIN}/polybar-preset"
@@ -183,7 +186,8 @@ create_directories() {
     "${CONFIG_DIR}/sxhkd" \
     "${LOCAL_BIN}" \
     "${USER_HOME}/.ssh" \
-    "${WALL_DIR}"
+    "${WALL_DIR}" \
+    "${SHOTS_DIR}"
 }
 
 backup_existing_files() {
@@ -723,6 +727,488 @@ EOF
   chmod +x "${LOCAL_BIN}/set-wallpaper"
 }
 
+write_screenshot_script() {
+  cat > "${LOCAL_BIN}/take-screenshot" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+shots_dir="${HOME}/Pictures/Screenshots"
+mode="${1:---pick}"
+
+notify_msg() {
+  local title="$1"
+  local body="$2"
+  if command -v notify-send >/dev/null 2>&1 && [[ -n "${DISPLAY:-}" ]]; then
+    notify-send "${title}" "${body}"
+  fi
+}
+
+pick_mode() {
+  local selected=""
+
+  if command -v rofi >/dev/null 2>&1 && [[ -n "${DISPLAY:-}" ]]; then
+    selected="$(
+      printf '%s\n' \
+        "Весь экран" \
+        "Выделить область" \
+        "Активное окно" |
+        rofi -dmenu -i -p "screenshot" -theme "$HOME/.config/rofi/menu.rasi" || true
+    )"
+  elif command -v yad >/dev/null 2>&1 && [[ -n "${DISPLAY:-}" ]]; then
+    selected="$(
+      printf '%s\n' \
+        "Весь экран" \
+        "Выделить область" \
+        "Активное окно" |
+        yad --list \
+          --title="Скриншот" \
+          --width=420 \
+          --height=260 \
+          --center \
+          --column="Режим" \
+          --separator="|" \
+          --button="Снять:0" \
+          --button="Отмена:1" 2>/dev/null || true
+    )"
+    selected="${selected%%|*}"
+  else
+    printf 'Режим (full/area/window): ' >&2
+    read -r selected || true
+  fi
+
+  case "${selected}" in
+    "Весь экран"|full|--full) printf '%s' "--full" ;;
+    "Выделить область"|area|--area) printf '%s' "--area" ;;
+    "Активное окно"|window|--window) printf '%s' "--window" ;;
+    *) printf '%s' "" ;;
+  esac
+}
+
+take_window() {
+  local output="$1"
+  local win_id=""
+
+  if command -v xdotool >/dev/null 2>&1; then
+    win_id="$(xdotool getactivewindow 2>/dev/null || true)"
+  fi
+
+  if [[ -n "${win_id}" ]]; then
+    maim -u -i "${win_id}" "${output}"
+    return
+  fi
+
+  maim -u "${output}"
+}
+
+if [[ -z "${DISPLAY:-}" ]]; then
+  printf '[ERROR] DISPLAY не найден. Скриншот доступен только в графической сессии.\n' >&2
+  exit 1
+fi
+
+if ! command -v maim >/dev/null 2>&1; then
+  printf '[ERROR] maim не найден. Установи пакет maim.\n' >&2
+  exit 1
+fi
+
+if [[ "${mode}" == "--pick" || "${mode}" == "pick" ]]; then
+  mode="$(pick_mode)"
+fi
+
+[[ -n "${mode}" ]] || exit 0
+
+mkdir -p "${shots_dir}"
+timestamp="$(date +%Y-%m-%d_%H-%M-%S)"
+output="${shots_dir}/shot_${timestamp}.png"
+
+case "${mode}" in
+  --full|full)
+    maim -u "${output}"
+    ;;
+  --area|area)
+    maim -s -u "${output}"
+    ;;
+  --window|window)
+    take_window "${output}"
+    ;;
+  *)
+    printf '[ERROR] Неизвестный режим: %s\n' "${mode}" >&2
+    exit 1
+    ;;
+esac
+
+if [[ ! -s "${output}" ]]; then
+  printf '[ERROR] Скриншот не сохранён.\n' >&2
+  exit 1
+fi
+
+clip_note=""
+if command -v xclip >/dev/null 2>&1; then
+  xclip -selection clipboard -t image/png -i "${output}" >/dev/null 2>&1 || true
+  clip_note=" и скопирован в буфер"
+fi
+
+notify_msg "Скриншот готов" "${output##*/}${clip_note}"
+printf '%s\n' "${output}"
+EOF
+
+  chmod +x "${LOCAL_BIN}/take-screenshot"
+}
+
+write_theme_script() {
+  cat > "${LOCAL_BIN}/imba-theme" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+theme="${1:-}"
+state_dir="${XDG_CONFIG_HOME:-$HOME/.config}/imba-bspwm"
+state_file="${state_dir}/theme"
+
+polybar_file="${HOME}/.config/polybar/config.ini"
+rofi_launcher="${HOME}/.config/rofi/launcher.rasi"
+rofi_menu="${HOME}/.config/rofi/menu.rasi"
+dunst_file="${HOME}/.config/dunst/dunstrc"
+
+list_themes() {
+  printf '%s\n' "ocean" "sunset" "forest" "nord" "graphite"
+}
+
+notify_msg() {
+  local title="$1"
+  local body="$2"
+  if command -v notify-send >/dev/null 2>&1 && [[ -n "${DISPLAY:-}" ]]; then
+    notify-send "${title}" "${body}"
+  fi
+}
+
+pick_theme() {
+  local selected=""
+
+  if command -v rofi >/dev/null 2>&1 && [[ -n "${DISPLAY:-}" ]]; then
+    selected="$(
+      list_themes | rofi -dmenu -i -p "theme" -theme "$HOME/.config/rofi/menu.rasi" || true
+    )"
+  elif command -v yad >/dev/null 2>&1 && [[ -n "${DISPLAY:-}" ]]; then
+    selected="$(
+      list_themes |
+        yad --list \
+          --title="Темы интерфейса" \
+          --width=420 \
+          --height=300 \
+          --center \
+          --column="Тема" \
+          --separator="|" \
+          --button="Применить:0" \
+          --button="Отмена:1" 2>/dev/null || true
+    )"
+    selected="${selected%%|*}"
+  else
+    printf 'Тема (%s): ' "$(list_themes | tr '\n' '/' | sed 's#/$##')" >&2
+    read -r selected || true
+  fi
+
+  printf '%s' "${selected}"
+}
+
+set_ini_key() {
+  local section="$1"
+  local key="$2"
+  local value="$3"
+  local file="$4"
+  local tmp_file
+
+  [[ -f "${file}" ]] || return 0
+  tmp_file="$(mktemp)"
+
+  awk -v target_section="${section}" -v target_key="${key}" -v target_value="${value}" '
+    BEGIN {
+      in_target = 0
+      section_found = 0
+      key_written = 0
+    }
+
+    function print_value() {
+      printf "%s = %s\n", target_key, target_value
+      key_written = 1
+    }
+
+    {
+      line = $0
+
+      if (match(line, /^[[:space:]]*\[[^]]+\][[:space:]]*$/)) {
+        if (in_target && !key_written) {
+          print_value()
+        }
+
+        section_name = line
+        gsub(/^[[:space:]]*\[/, "", section_name)
+        gsub(/\][[:space:]]*$/, "", section_name)
+
+        if (tolower(section_name) == tolower(target_section)) {
+          in_target = 1
+          section_found = 1
+        } else {
+          in_target = 0
+        }
+
+        print line
+        next
+      }
+
+      if (in_target && match(line, "^[[:space:]]*" target_key "[[:space:]]*=")) {
+        if (!key_written) {
+          print_value()
+        }
+        next
+      }
+
+      print line
+    }
+
+    END {
+      if (!section_found) {
+        print ""
+        printf "[%s]\n", target_section
+        print_value()
+      } else if (in_target && !key_written) {
+        print_value()
+      }
+    }
+  ' "${file}" > "${tmp_file}"
+
+  mv "${tmp_file}" "${file}"
+}
+
+set_rasi_var() {
+  local file="$1"
+  local key="$2"
+  local value="$3"
+  [[ -f "${file}" ]] || return 0
+  sed -E -i "s@^([[:space:]]*${key}[[:space:]]*:[[:space:]]*)[^;]+;@\\1${value};@g" "${file}"
+}
+
+apply_palette() {
+  case "$1" in
+    ocean|default)
+      pb_background="#D80C1118"
+      pb_surface="#EB131A23"
+      pb_surface_alt="#F018212B"
+      pb_foreground="#ECF2F8"
+      pb_muted="#8EA0B2"
+      pb_primary="#84D8C2"
+      pb_secondary="#F3C782"
+      pb_accent="#8FB9FF"
+      pb_alert="#F49BB4"
+      pb_border="#22303D"
+      rofi_bg="#0f1418ee"
+      rofi_bg_panel="#161b21ff"
+      rofi_bg_card="#1d252dff"
+      rofi_fg="#f5f7faff"
+      rofi_muted="#93a0adff"
+      rofi_accent="#79d0b8ff"
+      rofi_urgent="#f28fadff"
+      rofi_border="#2b343fff"
+      rofi_menu_bg="#101418ee"
+      rofi_menu_accent="#f6c177ff"
+      dunst_bg="#101418"
+      dunst_fg="#F5F7FA"
+      dunst_frame_low="#2B343F"
+      dunst_frame_normal="#79D0B8"
+      dunst_frame_critical="#F28FAD"
+      ;;
+    sunset)
+      pb_background="#D81A1010"
+      pb_surface="#EB231617"
+      pb_surface_alt="#F02A1B1E"
+      pb_foreground="#F8EEE8"
+      pb_muted="#BDA598"
+      pb_primary="#F4A261"
+      pb_secondary="#E9C46A"
+      pb_accent="#E76F51"
+      pb_alert="#FF6B6B"
+      pb_border="#4B2F32"
+      rofi_bg="#1a1010ee"
+      rofi_bg_panel="#231617ff"
+      rofi_bg_card="#2a1b1eff"
+      rofi_fg="#f8eee8ff"
+      rofi_muted="#bda598ff"
+      rofi_accent="#f4a261ff"
+      rofi_urgent="#ff6b6bff"
+      rofi_border="#4b2f32ff"
+      rofi_menu_bg="#1a1010ee"
+      rofi_menu_accent="#e9c46aff"
+      dunst_bg="#1A1010"
+      dunst_fg="#F8EEE8"
+      dunst_frame_low="#4B2F32"
+      dunst_frame_normal="#F4A261"
+      dunst_frame_critical="#FF6B6B"
+      ;;
+    forest)
+      pb_background="#D70A1611"
+      pb_surface="#E914221B"
+      pb_surface_alt="#EF1A2B22"
+      pb_foreground="#EAF5EE"
+      pb_muted="#8FA99A"
+      pb_primary="#6FCF97"
+      pb_secondary="#B7D879"
+      pb_accent="#56CCF2"
+      pb_alert="#EB5757"
+      pb_border="#1F3A2F"
+      rofi_bg="#0a1611ee"
+      rofi_bg_panel="#14221bff"
+      rofi_bg_card="#1a2b22ff"
+      rofi_fg="#eaf5eeff"
+      rofi_muted="#8fa99aff"
+      rofi_accent="#6fcf97ff"
+      rofi_urgent="#eb5757ff"
+      rofi_border="#1f3a2fff"
+      rofi_menu_bg="#0a1611ee"
+      rofi_menu_accent="#b7d879ff"
+      dunst_bg="#0A1611"
+      dunst_fg="#EAF5EE"
+      dunst_frame_low="#1F3A2F"
+      dunst_frame_normal="#6FCF97"
+      dunst_frame_critical="#EB5757"
+      ;;
+    nord)
+      pb_background="#D82B313D"
+      pb_surface="#EB3B4252"
+      pb_surface_alt="#F0434C5E"
+      pb_foreground="#ECEFF4"
+      pb_muted="#AAB3C5"
+      pb_primary="#88C0D0"
+      pb_secondary="#EBCB8B"
+      pb_accent="#81A1C1"
+      pb_alert="#BF616A"
+      pb_border="#4C566A"
+      rofi_bg="#2b313dee"
+      rofi_bg_panel="#3b4252ff"
+      rofi_bg_card="#434c5eff"
+      rofi_fg="#eceff4ff"
+      rofi_muted="#aab3c5ff"
+      rofi_accent="#88c0d0ff"
+      rofi_urgent="#bf616aff"
+      rofi_border="#4c566aff"
+      rofi_menu_bg="#2b313dee"
+      rofi_menu_accent="#ebcb8bff"
+      dunst_bg="#2B313D"
+      dunst_fg="#ECEFF4"
+      dunst_frame_low="#4C566A"
+      dunst_frame_normal="#88C0D0"
+      dunst_frame_critical="#BF616A"
+      ;;
+    graphite)
+      pb_background="#D8141518"
+      pb_surface="#EB1D1F24"
+      pb_surface_alt="#F0252830"
+      pb_foreground="#ECEDEF"
+      pb_muted="#9CA1AB"
+      pb_primary="#C6CAD1"
+      pb_secondary="#A7B0BE"
+      pb_accent="#D0D7E3"
+      pb_alert="#F47174"
+      pb_border="#30343D"
+      rofi_bg="#141518ee"
+      rofi_bg_panel="#1d1f24ff"
+      rofi_bg_card="#252830ff"
+      rofi_fg="#ecedefff"
+      rofi_muted="#9ca1abff"
+      rofi_accent="#c6cad1ff"
+      rofi_urgent="#f47174ff"
+      rofi_border="#30343dff"
+      rofi_menu_bg="#141518ee"
+      rofi_menu_accent="#d0d7e3ff"
+      dunst_bg="#141518"
+      dunst_fg="#ECEDEF"
+      dunst_frame_low="#30343D"
+      dunst_frame_normal="#C6CAD1"
+      dunst_frame_critical="#F47174"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  return 0
+}
+
+case "${theme}" in
+  -h|--help)
+    printf 'Использование: imba-theme [theme]\n'
+    printf 'Темы: %s\n' "$(list_themes | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
+    exit 0
+    ;;
+  --list)
+    list_themes
+    exit 0
+    ;;
+esac
+
+if [[ -z "${theme}" || "${theme}" == "--pick" ]]; then
+  theme="$(pick_theme)"
+fi
+
+[[ -n "${theme}" ]] || exit 0
+
+if ! apply_palette "${theme}"; then
+  printf '[ERROR] Неизвестная тема: %s\n' "${theme}" >&2
+  exit 1
+fi
+
+mkdir -p "${state_dir}"
+printf '%s\n' "${theme}" > "${state_file}"
+
+set_ini_key "colors" "background" "${pb_background}" "${polybar_file}"
+set_ini_key "colors" "surface" "${pb_surface}" "${polybar_file}"
+set_ini_key "colors" "surface-alt" "${pb_surface_alt}" "${polybar_file}"
+set_ini_key "colors" "foreground" "${pb_foreground}" "${polybar_file}"
+set_ini_key "colors" "muted" "${pb_muted}" "${polybar_file}"
+set_ini_key "colors" "primary" "${pb_primary}" "${polybar_file}"
+set_ini_key "colors" "secondary" "${pb_secondary}" "${polybar_file}"
+set_ini_key "colors" "accent" "${pb_accent}" "${polybar_file}"
+set_ini_key "colors" "alert" "${pb_alert}" "${polybar_file}"
+set_ini_key "colors" "border" "${pb_border}" "${polybar_file}"
+
+set_rasi_var "${rofi_launcher}" "bg" "${rofi_bg}"
+set_rasi_var "${rofi_launcher}" "bg-panel" "${rofi_bg_panel}"
+set_rasi_var "${rofi_launcher}" "bg-card" "${rofi_bg_card}"
+set_rasi_var "${rofi_launcher}" "fg" "${rofi_fg}"
+set_rasi_var "${rofi_launcher}" "muted" "${rofi_muted}"
+set_rasi_var "${rofi_launcher}" "accent" "${rofi_accent}"
+set_rasi_var "${rofi_launcher}" "urgent" "${rofi_urgent}"
+set_rasi_var "${rofi_launcher}" "border" "${rofi_border}"
+
+set_rasi_var "${rofi_menu}" "bg" "${rofi_menu_bg}"
+set_rasi_var "${rofi_menu}" "bg-panel" "${rofi_bg_panel}"
+set_rasi_var "${rofi_menu}" "bg-card" "${rofi_bg_card}"
+set_rasi_var "${rofi_menu}" "fg" "${rofi_fg}"
+set_rasi_var "${rofi_menu}" "muted" "${rofi_muted}"
+set_rasi_var "${rofi_menu}" "accent" "${rofi_menu_accent}"
+set_rasi_var "${rofi_menu}" "border" "${rofi_border}"
+
+set_ini_key "global" "background" "\"${dunst_bg}\"" "${dunst_file}"
+set_ini_key "global" "foreground" "\"${dunst_fg}\"" "${dunst_file}"
+set_ini_key "global" "frame_color" "\"${dunst_frame_normal}\"" "${dunst_file}"
+set_ini_key "urgency_low" "background" "\"${dunst_bg}\"" "${dunst_file}"
+set_ini_key "urgency_low" "foreground" "\"${dunst_fg}\"" "${dunst_file}"
+set_ini_key "urgency_low" "frame_color" "\"${dunst_frame_low}\"" "${dunst_file}"
+set_ini_key "urgency_normal" "background" "\"${dunst_bg}\"" "${dunst_file}"
+set_ini_key "urgency_normal" "foreground" "\"${dunst_fg}\"" "${dunst_file}"
+set_ini_key "urgency_normal" "frame_color" "\"${dunst_frame_normal}\"" "${dunst_file}"
+set_ini_key "urgency_critical" "background" "\"${dunst_bg}\"" "${dunst_file}"
+set_ini_key "urgency_critical" "foreground" "\"${dunst_fg}\"" "${dunst_file}"
+set_ini_key "urgency_critical" "frame_color" "\"${dunst_frame_critical}\"" "${dunst_file}"
+
+"${HOME}/.local/bin/polybar-refresh" >/dev/null 2>&1 || true
+pkill -x dunst >/dev/null 2>&1 || true
+dunst >/dev/null 2>&1 &
+
+notify_msg "Тема применена" "${theme}"
+printf '[OK] Тема применена: %s\n' "${theme}"
+EOF
+
+  chmod +x "${LOCAL_BIN}/imba-theme"
+}
+
 write_monitor_layout_script() {
   cat > "${LOCAL_BIN}/apply-monitor-layout" <<'EOF'
 #!/usr/bin/env bash
@@ -1154,7 +1640,9 @@ choices="$(
     'Polybar preset' \
     'Polybar custom' \
     'Применить настройки bar' \
+    'Сменить тему' \
     'Сменить обои' \
+    'Скриншот' \
     'Приватные файлы (arch-access)' \
     'Обновить setup' \
     'Перезапустить bar' \
@@ -1194,7 +1682,9 @@ case "${choice}" in
   "Polybar preset") exec "$HOME/.local/bin/polybar-preset" ;;
   "Polybar custom") exec "$HOME/.local/bin/app-settings" panel-custom ;;
   "Применить настройки bar") exec "$HOME/.local/bin/polybar-refresh" ;;
+  "Сменить тему") exec "$HOME/.local/bin/imba-theme" --pick ;;
   "Сменить обои") exec "$HOME/.local/bin/set-wallpaper" --pick ;;
+  "Скриншот") exec "$HOME/.local/bin/take-screenshot" --pick ;;
   "Приватные файлы (arch-access)") exec "$HOME/.local/bin/arch-access" ;;
   "Обновить setup") exec "$HOME/.local/bin/update-imba-script" ;;
   "Перезапустить bar") exec "$HOME/.local/bin/launch-polybar" ;;
@@ -1216,7 +1706,9 @@ choice="$(
     'Запуск приложений' \
     'Настройки приложений' \
     'Системные настройки' \
+    'Сменить тему' \
     'Сменить обои' \
+    'Скриншот' \
     'Трекпад' \
     'Приватные файлы' \
     'Обновить setup' \
@@ -1229,7 +1721,9 @@ case "${choice}" in
   "Запуск приложений") exec "$HOME/.local/bin/open-app-launcher" ;;
   "Настройки приложений") exec "$HOME/.local/bin/app-settings" ;;
   "Системные настройки") exec "$HOME/.local/bin/system-settings" ;;
+  "Сменить тему") exec "$HOME/.local/bin/imba-theme" --pick ;;
   "Сменить обои") exec "$HOME/.local/bin/set-wallpaper" --pick ;;
+  "Скриншот") exec "$HOME/.local/bin/take-screenshot" --pick ;;
   "Трекпад") exec "$HOME/.local/bin/configure-input-devices" ;;
   "Приватные файлы") exec "$HOME/.local/bin/arch-access" ;;
   "Обновить setup") exec "$HOME/.local/bin/update-imba-script" ;;
@@ -1435,6 +1929,8 @@ open_target() {
     panel-features) open_terminal_editor "$HOME/.config/polybar/features.ini" ;;
     panel-preset) exec "$HOME/.local/bin/polybar-preset" ;;
     panel-refresh) exec "$HOME/.local/bin/polybar-refresh" ;;
+    theme) exec "$HOME/.local/bin/imba-theme" --pick ;;
+    screenshot) exec "$HOME/.local/bin/take-screenshot" --pick ;;
     launcher) open_terminal_editor "$HOME/.config/rofi/launcher.rasi" ;;
     notifications) open_terminal_editor "$HOME/.config/dunst/dunstrc" ;;
     compositor) open_terminal_editor "$HOME/.config/picom/picom.conf" ;;
@@ -1466,6 +1962,8 @@ choice="$(
     "Polybar Features" "Тогглы модулей через ~/.config/polybar/features.ini" \
     "Polybar Refresh" "Применить toggles и перезапустить bar" \
     "Polybar Preset" "Быстрый выбор профиля: focus/balanced/monitoring" \
+    "Desktop Theme" "Переключить палитру интерфейса (bar/rofi/dunst)" \
+    "Screenshot" "Скриншот экрана, области или окна" \
     "Rofi Launcher" "Сетка приложений и quick hub" \
     "Dunst" "Уведомления и их оформление" \
     "Picom" "Сглаживание, тени и плавность" \
@@ -1484,6 +1982,8 @@ case "${selection}" in
   "Polybar Features") open_target panel-features ;;
   "Polybar Refresh") open_target panel-refresh ;;
   "Polybar Preset") open_target panel-preset ;;
+  "Desktop Theme") open_target theme ;;
+  Screenshot) open_target screenshot ;;
   "Rofi Launcher") open_target launcher ;;
   Dunst) open_target notifications ;;
   Picom) open_target compositor ;;
@@ -1509,8 +2009,10 @@ open_target() {
     trackpad) exec "$HOME/.local/bin/configure-input-devices" ;;
     bar) exec "$HOME/.local/bin/app-settings" panel ;;
     bar-refresh) exec "$HOME/.local/bin/polybar-refresh" ;;
+    theme) exec "$HOME/.local/bin/imba-theme" --pick ;;
     appearance) exec lxappearance ;;
     wallpaper) exec "$HOME/.local/bin/set-wallpaper" --pick ;;
+    screenshot) exec "$HOME/.local/bin/take-screenshot" --pick ;;
     avatar) exec "$HOME/.local/bin/set-user-avatar" --pick ;;
     ssh) exec "$HOME/.local/bin/bind-ssh-key" --pick ;;
     private-files) exec "$HOME/.local/bin/arch-access" ;;
@@ -1543,7 +2045,9 @@ choice="$(
     "Мониторы" "Положение экранов и разрешение" \
     "Обновить layout мониторов" "Переразложить рабочие столы для 2+ мониторов" \
     "Трекпад" "Включить tap-to-click, natural scroll и libinput tweaks" \
+    "Тема интерфейса" "Быстрое переключение готовых тем (ocean/sunset/forest/nord/graphite)" \
     "Обои" "Поставить свои обои и применить сразу" \
+    "Скриншоты" "Снять весь экран, область или активное окно" \
     "Polybar" "Быстрая настройка bar и пресетов" \
     "Применить Polybar" "Прочитать features.ini и обновить bar" \
     "Внешний вид" "GTK-тема, иконки, курсор и шрифты" \
@@ -1566,7 +2070,9 @@ case "${selection}" in
   Мониторы) open_target display ;;
   "Обновить layout мониторов") open_target display-layout ;;
   Трекпад) open_target trackpad ;;
+  "Тема интерфейса") open_target theme ;;
   Обои) open_target wallpaper ;;
+  Скриншоты) open_target screenshot ;;
   Polybar) open_target bar ;;
   "Применить Polybar") open_target bar-refresh ;;
   "Внешний вид") open_target appearance ;;
@@ -2152,6 +2658,29 @@ super + ctrl + w
 
 alt + ctrl + w
     ~/.local/bin/set-wallpaper --pick
+
+# screenshots
+Print
+    ~/.local/bin/take-screenshot --full
+
+shift + Print
+    ~/.local/bin/take-screenshot --area
+
+ctrl + Print
+    ~/.local/bin/take-screenshot --window
+
+super + shift + s
+    ~/.local/bin/take-screenshot --area
+
+alt + shift + s
+    ~/.local/bin/take-screenshot --area
+
+# switch desktop theme
+super + ctrl + t
+    ~/.local/bin/imba-theme --pick
+
+alt + ctrl + t
+    ~/.local/bin/imba-theme --pick
 
 # close focused window
 super + q
@@ -3056,6 +3585,7 @@ fix_permissions() {
     "${LOCAL_BIN}" \
     "${USER_HOME}/.ssh" \
     "${WALL_DIR}" \
+    "${SHOTS_DIR}" \
     "${USER_HOME}/.bash_profile" \
     "${USER_HOME}/.bashrc" \
     "${USER_HOME}/.xinitrc" \
@@ -3094,25 +3624,31 @@ print_next_steps() {
   echo "4. Если нужен ручной твик трекпада:"
   echo "   ~/.local/bin/configure-input-devices"
   echo
-  echo "5. Если хочешь привязать свой SSH ключ вручную:"
+  echo "5. Если хочешь сделать скриншот:"
+  echo "   ~/.local/bin/take-screenshot --pick"
+  echo
+  echo "6. Если хочешь быстро сменить тему:"
+  echo "   ~/.local/bin/imba-theme --pick"
+  echo
+  echo "7. Если хочешь привязать свой SSH ключ вручную:"
   echo "   ~/.local/bin/bind-ssh-key --pick"
   echo
-  echo "6. Доступ к приватным файлам:"
+  echo "8. Доступ к приватным файлам:"
   echo "   ~/.local/bin/arch-access"
   echo
-  echo "7. Обновление самого setup-скрипта:"
+  echo "9. Обновление самого setup-скрипта:"
   echo "   ~/.local/bin/update-imba-script"
   echo
-  echo "8. Кастомизация bar без ломки core:"
+  echo "10. Кастомизация bar без ломки core:"
   echo "   ~/.config/polybar/config.ini"
   echo "   ~/.config/polybar/features.ini"
   echo "   ~/.local/bin/polybar-refresh"
   echo "   ~/.local/bin/polybar-preset"
   echo
-  echo "9. Перезагрузи систему:"
+  echo "11. Перезагрузи систему:"
   echo "   sudo reboot"
   echo
-  echo "10. Главные хоткеи:"
+  echo "12. Главные хоткеи:"
   echo "   Alt+Return         -> терминал в тайлинге"
   echo "   Alt+Shift+Return   -> ещё один терминал"
   echo "   Alt+d              -> App Deck / выбор приложений"
@@ -3129,6 +3665,10 @@ print_next_steps() {
   echo "   Alt+Ctrl+a         -> arch-access (приватные файлы)"
   echo "   Alt+Ctrl+u         -> обновить setup-скрипт"
   echo "   Alt+Ctrl+w         -> сменить обои"
+  echo "   Print              -> скриншот всего экрана"
+  echo "   Shift+Print        -> скриншот выделенной области"
+  echo "   Ctrl+Print         -> скриншот активного окна"
+  echo "   Alt+Ctrl+t         -> сменить тему интерфейса"
   echo "   Alt+Ctrl+m         -> обновить layout мониторов + bar"
   echo "   Alt+Ctrl+l         -> кастомный lock screen (imba)"
   echo "   Alt+Shift+u        -> обновление системы"
@@ -3136,6 +3676,8 @@ print_next_steps() {
   echo "Верхняя панель теперь ближе к macOS-стилю: обязательные иконки Wi-Fi/Bluetooth/Settings плюс кастомизируемые модули."
   echo "Что показывать в bar можно выбрать через ~/.config/polybar/features.ini и применить ~/.local/bin/polybar-refresh."
   echo "Через ~/.local/bin/polybar-preset можно моментально включить monitoring-профиль с CPU/RAM."
+  echo "Темы интерфейса переключаются через ~/.local/bin/imba-theme (ocean/sunset/forest/nord/graphite)."
+  echo "Скриншоты: ~/.local/bin/take-screenshot (--full/--area/--window/--pick)."
   echo "Правый клик по ключевым модулям bar открывает новое контекстное меню."
   echo "Сессия теперь поднимается через LightDM: есть greeter, поля логина/пароля и аватар пользователя."
   echo "Столы в баре ужаты до цифр, а активный рабочий стол вынесен отдельным индикатором справа."
@@ -3163,8 +3705,10 @@ main() {
   write_update_script
   write_self_update_script
   write_wallpaper_scripts
+  write_screenshot_script
   write_monitor_layout_script
   write_input_devices_script
+  write_theme_script
   write_launcher_script
   write_arch_access_script
   write_bar_context_menu_script
