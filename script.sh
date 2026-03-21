@@ -562,8 +562,15 @@ git -C "${repo_dir}" rev-parse --is-inside-work-tree >/dev/null 2>&1 || fail "Н
 branch="$(git -C "${repo_dir}" rev-parse --abbrev-ref HEAD)"
 [[ "${branch}" != "HEAD" ]] || fail "Детачнутый HEAD. Переключись на обычную ветку перед обновлением."
 
+repo_dirty=0
+repo_untracked=0
+manual_stash_ref=""
 if ! git -C "${repo_dir}" diff --quiet || ! git -C "${repo_dir}" diff --cached --quiet; then
-  fail "В репозитории есть локальные изменения. Сначала commit/stash."
+  repo_dirty=1
+fi
+if [[ -n "$(git -C "${repo_dir}" ls-files --others --exclude-standard)" ]]; then
+  repo_dirty=1
+  repo_untracked=1
 fi
 
 store_repo "${repo_dir}"
@@ -596,7 +603,31 @@ fi
 behind_count="$(git -C "${repo_dir}" rev-list --count "${local_sha}..${remote_sha}" 2>/dev/null || echo '?')"
 printf '[INFO] Найдено %s новых коммит(ов), обновляю...\n' "${behind_count}"
 
-git -C "${repo_dir}" pull --ff-only || fail "Не удалось применить обновление (ff-only)."
+if (( repo_dirty == 1 )); then
+  printf '[INFO] Обнаружены локальные изменения. Пробую update с auto-stash...\n'
+fi
+
+if (( repo_untracked == 1 )); then
+  stash_msg="imba-updater-untracked-$(date +%s)"
+  git -C "${repo_dir}" stash push --include-untracked -m "${stash_msg}" >/dev/null 2>&1 || true
+  manual_stash_ref="$(
+    git -C "${repo_dir}" stash list |
+      awk -v msg="${stash_msg}" '$0 ~ msg {print $1; exit}' || true
+  )"
+fi
+
+if ! git -C "${repo_dir}" pull --rebase --autostash "${remote_name}" "${remote_branch}"; then
+  if [[ -n "${manual_stash_ref}" ]]; then
+    fail "Не удалось применить обновление. Локальные untracked сохранены в ${manual_stash_ref}. Верни их: git -C ${repo_dir} stash pop ${manual_stash_ref}"
+  fi
+  fail "Не удалось применить обновление (rebase/autostash). Проверь git status в ${repo_dir}."
+fi
+
+if [[ -n "${manual_stash_ref}" ]]; then
+  if ! git -C "${repo_dir}" stash pop --index "${manual_stash_ref}" >/dev/null 2>&1; then
+    fail "Обновление прошло, но не удалось вернуть изменения из ${manual_stash_ref}. Верни вручную: git -C ${repo_dir} stash pop ${manual_stash_ref}"
+  fi
+fi
 
 new_short_sha="$(git -C "${repo_dir}" rev-parse --short HEAD)"
 printf '[OK] Скрипт обновлён до %s\n' "${new_short_sha}"

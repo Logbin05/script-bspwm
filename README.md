@@ -107,6 +107,8 @@ sudo reboot
 ~/.local/bin/update-imba-script
 ```
 
+Если в repo есть локальные изменения, updater попробует аккуратно обновить через `rebase --autostash` (без ручного `commit/stash` в типовом случае).
+
 Если нужно вручную указать repo:
 
 ```bash
