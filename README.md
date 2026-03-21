@@ -1,4 +1,4 @@
-# Imba bspwm setup
+# BSPWM-UNICRON
 
 Скрипт `script.sh` поднимает аккуратный `bspwm`-desktop с цельным визуальным стилем:
 
