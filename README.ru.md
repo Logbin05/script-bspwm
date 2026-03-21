@@ -37,6 +37,7 @@ sudo reboot
 - `Alt+Ctrl+b` / `Super+Ctrl+b`: перезапуск polybar
 - `Alt+Ctrl+p` / `Super+Ctrl+p`: применить feature-тогглы polybar
 - `Alt+Ctrl+t` / `Super+Ctrl+t`: выбор темы интерфейса
+- `Alt+Space` / `Super+Space`: сменить раскладку (EN/RU)
 - `Alt+Ctrl+w` / `Super+Ctrl+w`: выбор обоев
 - `Alt+Ctrl+x` / `Super+Ctrl+x`: распаковка архива
 - `Alt+Ctrl+a` / `Super+Ctrl+a`: запуск `arch-access`
@@ -53,6 +54,7 @@ sudo reboot
 - `~/.local/bin/polybar-preset`: быстрый профиль (`focus`, `balanced`, `monitoring`)
 - `~/.local/bin/imba-theme --pick`: переключить тему интерфейса
 - `~/.local/bin/set-wallpaper --pick`: выбрать обои
+- `~/.local/bin/toggle-layout`: сменить раскладку клавиатуры (EN/RU)
 - `~/.local/bin/take-screenshot --pick`: меню скриншотов
 - `~/.local/bin/extract-any --pick`: распаковка архивов (`zip/rar/7z/tar/...`)
 - `~/.local/bin/open-file-manager`: единая команда файлового менеджера
@@ -61,7 +63,7 @@ sudo reboot
 - `~/.local/bin/set-user-avatar --pick`: поставить аватар для lock screen
 - `~/.local/bin/apply-monitor-layout`: переприменить раскладку мониторов
 - `~/.local/bin/configure-input-devices`: твики trackpad/libinput
-- `~/.local/bin/update-imba-script`: обновить этот репозиторий
+- `~/.local/bin/update-imba-script`: обновить репозиторий и автоматически применить `./script.sh` (флаг `--no-apply` выключает авто-применение)
 
 ## 5) Важные конфиги
 
@@ -114,7 +116,14 @@ tail -n 120 ~/.cache/polybar/main.log
 ~/.local/bin/update-imba-script
 ```
 
-Updater пытается сделать `pull --rebase --autostash`. Если остались конфликты, разрули их в репозитории и запусти команду снова.
+Updater делает `pull --rebase --autostash`, а затем автоматически запускает `./script.sh`.
+Если нужно только подтянуть изменения без применения, используй:
+
+```bash
+~/.local/bin/update-imba-script --no-apply
+```
+
+Если остались конфликты, разрули их в репозитории и запусти команду снова.
 
 ### В `~/.local/bin` нет нужных команд
 

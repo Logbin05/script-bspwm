@@ -37,6 +37,7 @@ All major bindings work with both `Alt` and `Super`.
 - `Alt+Ctrl+b` / `Super+Ctrl+b`: restart polybar
 - `Alt+Ctrl+p` / `Super+Ctrl+p`: apply polybar features
 - `Alt+Ctrl+t` / `Super+Ctrl+t`: pick desktop theme
+- `Alt+Space` / `Super+Space`: switch keyboard layout (EN/RU)
 - `Alt+Ctrl+w` / `Super+Ctrl+w`: pick wallpaper
 - `Alt+Ctrl+x` / `Super+Ctrl+x`: extract archive
 - `Alt+Ctrl+a` / `Super+Ctrl+a`: open `arch-access`
@@ -53,6 +54,7 @@ All major bindings work with both `Alt` and `Super`.
 - `~/.local/bin/polybar-preset`: quick preset (`focus`, `balanced`, `monitoring`)
 - `~/.local/bin/imba-theme --pick`: switch desktop theme
 - `~/.local/bin/set-wallpaper --pick`: choose wallpaper
+- `~/.local/bin/toggle-layout`: switch keyboard layout (EN/RU)
 - `~/.local/bin/take-screenshot --pick`: screenshot menu
 - `~/.local/bin/extract-any --pick`: extract archives (`zip/rar/7z/tar/...`)
 - `~/.local/bin/open-file-manager`: file manager wrapper
@@ -61,7 +63,7 @@ All major bindings work with both `Alt` and `Super`.
 - `~/.local/bin/set-user-avatar --pick`: set lock-screen avatar
 - `~/.local/bin/apply-monitor-layout`: re-apply multi-monitor layout
 - `~/.local/bin/configure-input-devices`: trackpad/libinput tweaks
-- `~/.local/bin/update-imba-script`: update this repository
+- `~/.local/bin/update-imba-script`: update repo and auto-apply `./script.sh` (use `--no-apply` to skip apply)
 
 ## 5) Key config files
 
@@ -114,7 +116,14 @@ Use:
 ~/.local/bin/update-imba-script
 ```
 
-The updater attempts `pull --rebase --autostash`. If conflicts remain, resolve them in your repo and run again.
+The updater attempts `pull --rebase --autostash` and then auto-runs `./script.sh`.
+If you only want to pull updates without applying them immediately, use:
+
+```bash
+~/.local/bin/update-imba-script --no-apply
+```
+
+If conflicts remain, resolve them in your repo and run again.
 
 ### Commands are missing in `~/.local/bin`
 
