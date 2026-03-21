@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage: open-file-manager [--path DIR] [--select FILE]
+
+Env:
+  FILE_MANAGER=thunar|yazi|<custom binary>
+EOF
+}
+
+resolve_target() {
+  local value="${1:-$HOME}"
+  value="${value/#\~/$HOME}"
+  realpath -m "${value}"
+}
+
+mode="path"
+target="$HOME"
+
+case "${1:-}" in
+  -h|--help)
+    usage
+    exit 0
+    ;;
+  --path)
+    mode="path"
+    target="$(resolve_target "${2:-$HOME}")"
+    ;;
+  --select)
+    mode="select"
+    target="$(resolve_target "${2:-$HOME}")"
+    ;;
+  "")
+    ;;
+  *)
+    target="$(resolve_target "${1}")"
+    ;;
+esac
+
+manager="${FILE_MANAGER:-thunar}"
+
+if [[ "${manager}" == "thunar" ]]; then
+  command -v thunar >/dev/null 2>&1 || {
+    printf '[ERROR] thunar is not installed.\n' >&2
+    exit 1
+  }
+
+  if [[ "${mode}" == "select" ]]; then
+    exec thunar --select "${target}"
+  fi
+  exec thunar "${target}"
+fi
+
+if [[ "${manager}" == "yazi" ]]; then
+  command -v yazi >/dev/null 2>&1 || {
+    printf '[ERROR] yazi is not installed.\n' >&2
+    exit 1
+  }
+
+  base="${target}"
+  if [[ "${mode}" == "select" && -f "${target}" ]]; then
+    base="$(dirname "${target}")"
+  fi
+
+  if command -v alacritty >/dev/null 2>&1; then
+    exec alacritty -e yazi "${base}"
+  fi
+  exec yazi "${base}"
+fi
+
+command -v "${manager}" >/dev/null 2>&1 || {
+  printf '[ERROR] FILE_MANAGER command not found: %s\n' "${manager}" >&2
+  exit 1
+}
+
+if [[ "${mode}" == "select" ]]; then
+  exec "${manager}" "${target}"
+fi
+
+exec "${manager}" "${target}"
