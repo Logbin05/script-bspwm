@@ -14,6 +14,8 @@ phase_generate_ui_assets() {
   write_input_devices_script
   write_layout_scripts
   write_terminal_modals_script
+  write_shell_help_script
+  write_timezone_script
   write_launcher_script
   write_open_file_manager_script
   write_bar_context_menu_script
