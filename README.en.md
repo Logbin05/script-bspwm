@@ -166,9 +166,37 @@ bin/
   imba-control-center
   open-file-manager
   arch-access
+iso/
+  airootfs/             # files injected into live rootfs
+  extra-packages.x86_64 # extra package layer for archiso releng
+tools/
+  unicron-iso-builder/  # Rust ISO builder (mkarchiso wrapper)
 ```
 
-## 9) License
+## 9) Custom ISO Build
+
+Build on Arch Linux (or inside an Arch VM on Windows/macOS):
+
+```bash
+sudo pacman -S --needed archiso rsync rust cargo
+cargo run --manifest-path tools/unicron-iso-builder/Cargo.toml -- --clean
+```
+
+Output:
+
+```text
+dist/bspwm-unicron-YYYY.MM.DD-x86_64.iso
+```
+
+Change embedded bootstrap source (repo/branch used by `/usr/local/bin/unicron-bootstrap` inside ISO):
+
+```bash
+cargo run --manifest-path tools/unicron-iso-builder/Cargo.toml -- \
+  --repo-url https://github.com/Logbin05/BSPWM-UNICRON.git \
+  --repo-ref dev
+```
+
+## 10) License
 
 This project uses a custom source-available license:
 
