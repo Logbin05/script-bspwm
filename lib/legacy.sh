@@ -71,6 +71,7 @@ PACKAGES=(
   accountsservice
   alacritty
   arandr
+  brightnessctl
   blueman
   bluez
   bluez-utils
@@ -100,6 +101,7 @@ PACKAGES=(
   picom
   pipewire
   pipewire-pulse
+  playerctl
   polybar
   rofi
   sxhkd
@@ -148,12 +150,15 @@ BACKUP_TARGETS=(
   "${LOCAL_BIN}/app-settings"
   "${LOCAL_BIN}/arch-access"
   "${LOCAL_BIN}/bar-context-menu"
+  "${LOCAL_BIN}/bluetooth-menu"
   "${LOCAL_BIN}/configure-input-devices"
   "${LOCAL_BIN}/control-center"
   "${LOCAL_BIN}/dropdown-terminal"
   "${LOCAL_BIN}/launch-polybar"
   "${LOCAL_BIN}/lock-screen"
+  "${LOCAL_BIN}/terminal-modals"
   "${LOCAL_BIN}/toggle-layout"
+  "${LOCAL_BIN}/wifi-menu"
   "${LOCAL_BIN}/open-file-manager"
   "${LOCAL_BIN}/open-app-launcher"
   "${LOCAL_BIN}/power-menu"
@@ -1531,6 +1536,10 @@ mapfile -t touchpads < <(
 
 for device in "${touchpads[@]}"; do
   xinput set-prop "${device}" "libinput Tapping Enabled" 1 >/dev/null 2>&1 || true
+  # 2-finger tap -> right click (context menu), 3-finger -> middle click
+  xinput set-prop "${device}" "libinput Tapping Button Mapping Enabled" 1 0 >/dev/null 2>&1 || true
+  # Clickfinger mode improves right-click behavior on many touchpads
+  xinput set-prop "${device}" "libinput Click Method Enabled" 0 1 >/dev/null 2>&1 || true
   xinput set-prop "${device}" "libinput Natural Scrolling Enabled" 1 >/dev/null 2>&1 || true
   xinput set-prop "${device}" "libinput Disable While Typing Enabled" 1 >/dev/null 2>&1 || true
   xinput set-prop "${device}" "libinput Tapping Drag Enabled" 1 >/dev/null 2>&1 || true
@@ -1574,6 +1583,150 @@ fi
 EOF
 
   chmod +x "${LOCAL_BIN}/toggle-layout"
+}
+
+write_terminal_modals_script() {
+  cat > "${LOCAL_BIN}/terminal-modals" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+run_wifi() {
+  if command -v nmtui >/dev/null 2>&1; then
+    nmtui || true
+    return
+  fi
+  nm-connection-editor >/dev/null 2>&1 || true
+}
+
+run_bluetooth() {
+  if command -v bluetoothctl >/dev/null 2>&1; then
+    bluetoothctl || true
+    return
+  fi
+  blueman-manager >/dev/null 2>&1 || true
+}
+
+run_audio() {
+  pavucontrol >/dev/null 2>&1 || true
+}
+
+run_display() {
+  arandr >/dev/null 2>&1 || true
+}
+
+run_theme() {
+  "$HOME/.local/bin/imba-theme" --pick || true
+}
+
+run_wallpaper() {
+  "$HOME/.local/bin/set-wallpaper" --pick || true
+}
+
+run_archives() {
+  "$HOME/.local/bin/extract-any" --pick || true
+}
+
+run_screenshot() {
+  "$HOME/.local/bin/take-screenshot" --pick || true
+}
+
+run_updates() {
+  "$HOME/.local/bin/update-imba-script" || true
+}
+
+run_power() {
+  "$HOME/.local/bin/power-menu" || true
+}
+
+open_in_alacritty() {
+  local mode="$1"
+
+  if command -v alacritty >/dev/null 2>&1; then
+    alacritty --class settings-editor -e "$0" "${mode}" --tty >/dev/null 2>&1 &
+    exit 0
+  fi
+}
+
+show_menu() {
+  while true; do
+    clear
+    cat <<'MENU'
+=== BSPWM-UNICRON Terminal Modals ===
+1) Wi-Fi (nmtui)
+2) Bluetooth (bluetoothctl)
+3) Audio
+4) Display
+5) Theme
+6) Wallpaper
+7) Archives
+8) Screenshot
+9) Update setup (auto-apply)
+10) Power menu
+0) Exit
+MENU
+
+    printf 'Выбор: '
+    read -r choice || true
+
+    case "${choice}" in
+      1) run_wifi ;;
+      2) run_bluetooth ;;
+      3) run_audio ;;
+      4) run_display ;;
+      5) run_theme ;;
+      6) run_wallpaper ;;
+      7) run_archives ;;
+      8) run_screenshot ;;
+      9) run_updates ;;
+      10) run_power ;;
+      0|q|Q|exit) exit 0 ;;
+      *) printf 'Неизвестный пункт.\n'; sleep 1 ;;
+    esac
+  done
+}
+
+mode="${1:-menu}"
+force_tty="${2:-}"
+
+case "${mode}" in
+  wifi)
+    [[ "${force_tty}" == "--tty" || -t 1 ]] || open_in_alacritty "wifi"
+    run_wifi
+    ;;
+  bluetooth)
+    [[ "${force_tty}" == "--tty" || -t 1 ]] || open_in_alacritty "bluetooth"
+    run_bluetooth
+    ;;
+  menu|--menu)
+    [[ "${force_tty}" == "--tty" || -t 1 ]] || open_in_alacritty "menu"
+    show_menu
+    ;;
+  *)
+    printf 'Usage: %s [menu|wifi|bluetooth]\n' "$0" >&2
+    exit 1
+    ;;
+esac
+EOF
+
+  chmod +x "${LOCAL_BIN}/terminal-modals"
+
+  cat > "${LOCAL_BIN}/wifi-menu" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+exec "$HOME/.local/bin/terminal-modals" wifi "$@"
+EOF
+
+  chmod +x "${LOCAL_BIN}/wifi-menu"
+
+  cat > "${LOCAL_BIN}/bluetooth-menu" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+exec "$HOME/.local/bin/terminal-modals" bluetooth "$@"
+EOF
+
+  chmod +x "${LOCAL_BIN}/bluetooth-menu"
 }
 
 write_polybar_features_config() {
@@ -2032,6 +2185,7 @@ choices="$(
     'Сменить обои' \
     'Распаковать архив' \
     'Скриншот' \
+    'Терминальные модалки' \
     'Приватные файлы (arch-access)' \
     'Обновить setup (auto-apply)' \
     'Перезапустить bar' \
@@ -2075,6 +2229,7 @@ case "${choice}" in
   "Сменить обои") exec "$HOME/.local/bin/set-wallpaper" --pick ;;
   "Распаковать архив") exec "$HOME/.local/bin/extract-any" --pick ;;
   "Скриншот") exec "$HOME/.local/bin/take-screenshot" --pick ;;
+  "Терминальные модалки") exec "$HOME/.local/bin/terminal-modals" menu ;;
   "Приватные файлы (arch-access)") exec "$HOME/.local/bin/arch-access" ;;
   "Обновить setup (auto-apply)") exec "$HOME/.local/bin/update-imba-script" ;;
   "Перезапустить bar") exec "$HOME/.local/bin/launch-polybar" ;;
@@ -2100,6 +2255,7 @@ choice="$(
     'Сменить обои' \
     'Распаковать архив' \
     'Скриншот' \
+    'Терминальные модалки' \
     'Трекпад' \
     'Приватные файлы' \
     'Обновить setup (auto-apply)' \
@@ -2116,6 +2272,7 @@ case "${choice}" in
   "Сменить обои") exec "$HOME/.local/bin/set-wallpaper" --pick ;;
   "Распаковать архив") exec "$HOME/.local/bin/extract-any" --pick ;;
   "Скриншот") exec "$HOME/.local/bin/take-screenshot" --pick ;;
+  "Терминальные модалки") exec "$HOME/.local/bin/terminal-modals" menu ;;
   "Трекпад") exec "$HOME/.local/bin/configure-input-devices" ;;
   "Приватные файлы") exec "$HOME/.local/bin/arch-access" ;;
   "Обновить setup (auto-apply)") exec "$HOME/.local/bin/update-imba-script" ;;
@@ -2396,13 +2553,14 @@ set -euo pipefail
 
 open_target() {
   case "$1" in
-    network) exec nm-connection-editor ;;
-    bluetooth) exec blueman-manager ;;
+    network) exec "$HOME/.local/bin/wifi-menu" ;;
+    bluetooth) exec "$HOME/.local/bin/bluetooth-menu" ;;
     audio) exec pavucontrol ;;
     display) exec arandr ;;
     display-layout) exec "$HOME/.local/bin/apply-monitor-layout" ;;
     layout) exec "$HOME/.local/bin/toggle-layout" ;;
     trackpad) exec "$HOME/.local/bin/configure-input-devices" ;;
+    terminal-modals) exec "$HOME/.local/bin/terminal-modals" menu ;;
     bar) exec "$HOME/.local/bin/app-settings" panel ;;
     bar-refresh) exec "$HOME/.local/bin/polybar-refresh" ;;
     theme) exec "$HOME/.local/bin/imba-theme" --pick ;;
@@ -2442,6 +2600,7 @@ choice="$(
     "Мониторы" "Положение экранов и разрешение" \
     "Обновить layout мониторов" "Переразложить рабочие столы для 2+ мониторов" \
     "Раскладка" "Сменить язык клавиатуры (EN/RU)" \
+    "Терминальные модалки" "Wi-Fi/Bluetooth и другие меню в формате терминала" \
     "Трекпад" "Включить tap-to-click, natural scroll и libinput tweaks" \
     "Тема интерфейса" "Быстрое переключение готовых тем (ocean/sunset/forest/nord/graphite)" \
     "Обои" "Поставить свои обои и применить сразу" \
@@ -2469,6 +2628,7 @@ case "${selection}" in
   Мониторы) open_target display ;;
   "Обновить layout мониторов") open_target display-layout ;;
   Раскладка) open_target layout ;;
+  "Терминальные модалки") open_target terminal-modals ;;
   Трекпад) open_target trackpad ;;
   "Тема интерфейса") open_target theme ;;
   Обои) open_target wallpaper ;;
@@ -2733,6 +2893,7 @@ write_polybar_fallback_config() {
 [bar/main]
 width = 100%
 height = 30
+radius = 0
 background = #101418
 foreground = #F5F7FA
 border-size = 0
@@ -2781,18 +2942,18 @@ type = custom/script
 exec = ~/.config/polybar/scripts/network-icon
 interval = 5
 format-padding = 1
-click-left = ~/.local/bin/system-settings network
+click-left = ~/.local/bin/wifi-menu
 click-right = ~/.local/bin/bar-context-menu
-click-middle = nm-connection-editor
+click-middle = ~/.local/bin/wifi-menu
 
 [module/bluetooth-icon]
 type = custom/script
 exec = ~/.config/polybar/scripts/bluetooth-icon
 interval = 8
 format-padding = 1
-click-left = ~/.local/bin/system-settings bluetooth
+click-left = ~/.local/bin/bluetooth-menu
 click-right = ~/.local/bin/bar-context-menu
-click-middle = blueman-manager
+click-middle = ~/.local/bin/bluetooth-menu
 
 [module/layout]
 type = custom/script
@@ -3251,6 +3412,32 @@ XF86AudioLowerVolume
 
 XF86AudioMute
     pactl set-sink-mute @DEFAULT_SINK@ toggle
+
+# brightness (Fn + F-keys on most laptops)
+XF86MonBrightnessUp
+    brightnessctl set +7%
+
+XF86MonBrightnessDown
+    brightnessctl set 7%-
+
+XF86KbdBrightnessUp
+    brightnessctl -d '*kbd_backlight*' set +1 || true
+
+XF86KbdBrightnessDown
+    brightnessctl -d '*kbd_backlight*' set 1- || true
+
+# media (Fn + F-keys on many laptops)
+XF86AudioPlay
+    playerctl play-pause || true
+
+XF86AudioNext
+    playerctl next || true
+
+XF86AudioPrev
+    playerctl previous || true
+
+XF86AudioStop
+    playerctl stop || true
 EOF
 }
 
@@ -3418,9 +3605,9 @@ interval = 5
 format-background = \${colors.surface}
 format-foreground = \${colors.foreground}
 format-padding = 1
-click-left = ~/.local/bin/system-settings network
+click-left = ~/.local/bin/wifi-menu
 click-right = ~/.local/bin/bar-context-menu
-click-middle = nm-connection-editor
+click-middle = ~/.local/bin/wifi-menu
 
 [module/bluetooth-icon]
 type = custom/script
@@ -3429,9 +3616,9 @@ interval = 8
 format-background = \${colors.surface}
 format-foreground = \${colors.foreground}
 format-padding = 1
-click-left = ~/.local/bin/system-settings bluetooth
+click-left = ~/.local/bin/bluetooth-menu
 click-right = ~/.local/bin/bar-context-menu
-click-middle = blueman-manager
+click-middle = ~/.local/bin/bluetooth-menu
 
 [module/cpu]
 type = internal/cpu
@@ -3471,9 +3658,9 @@ interval = 5
 format-background = \${colors.surface}
 format-foreground = \${colors.foreground}
 format-padding = 1
-click-left = ~/.local/bin/system-settings network
+click-left = ~/.local/bin/wifi-menu
 click-right = ~/.local/bin/bar-context-menu
-click-middle = nm-connection-editor
+click-middle = ~/.local/bin/wifi-menu
 
 [module/bluetooth]
 type = custom/script
@@ -3482,9 +3669,9 @@ interval = 8
 format-background = \${colors.surface}
 format-foreground = \${colors.foreground}
 format-padding = 1
-click-left = ~/.local/bin/system-settings bluetooth
+click-left = ~/.local/bin/bluetooth-menu
 click-right = ~/.local/bin/bar-context-menu
-click-middle = blueman-manager
+click-middle = ~/.local/bin/bluetooth-menu
 
 [module/battery]
 type = internal/battery
@@ -3557,8 +3744,8 @@ EOF
 write_alacritty_config() {
   cat > "${CONFIG_DIR}/alacritty/alacritty.toml" <<'EOF'
 [window]
-opacity = 0.9
-padding = { x = 16, y = 14 }
+opacity = 0.94
+padding = { x = 18, y = 16 }
 decorations = "None"
 dynamic_padding = true
 
@@ -3566,7 +3753,9 @@ dynamic_padding = true
 normal = { family = "JetBrainsMono Nerd Font", style = "Regular" }
 bold = { family = "JetBrainsMono Nerd Font", style = "Bold" }
 italic = { family = "JetBrainsMono Nerd Font", style = "Italic" }
-size = 11.0
+size = 11.5
+offset = { x = 0, y = 1 }
+glyph_offset = { x = 0, y = 0 }
 
 [cursor]
 blink_interval = 600
@@ -4097,25 +4286,28 @@ print_next_steps() {
   echo "8. Если хочешь переключить раскладку вручную:"
   echo "   ~/.local/bin/toggle-layout"
   echo
-  echo "9. Если хочешь привязать свой SSH ключ вручную:"
+  echo "9. Терминальные модалки (Wi-Fi/Bluetooth/и т.д.):"
+  echo "   ~/.local/bin/terminal-modals menu"
+  echo
+  echo "10. Если хочешь привязать свой SSH ключ вручную:"
   echo "   ~/.local/bin/bind-ssh-key --pick"
   echo
-  echo "10. Доступ к приватным файлам:"
+  echo "11. Доступ к приватным файлам:"
   echo "   ~/.local/bin/arch-access"
   echo
-  echo "11. Обновление самого setup-скрипта:"
+  echo "12. Обновление самого setup-скрипта:"
   echo "   ~/.local/bin/update-imba-script"
   echo
-  echo "12. Кастомизация bar без ломки core:"
+  echo "13. Кастомизация bar без ломки core:"
   echo "   ~/.config/polybar/config.ini"
   echo "   ~/.config/polybar/features.ini"
   echo "   ~/.local/bin/polybar-refresh"
   echo "   ~/.local/bin/polybar-preset"
   echo
-  echo "13. Перезагрузи систему:"
+  echo "14. Перезагрузи систему:"
   echo "   sudo reboot"
   echo
-  echo "14. Главные хоткеи:"
+  echo "15. Главные хоткеи:"
   echo "   Alt+Return         -> терминал в тайлинге"
   echo "   Alt+Shift+Return   -> ещё один терминал"
   echo "   Alt+d              -> App Deck / выбор приложений"
@@ -4137,6 +4329,8 @@ print_next_steps() {
   echo "   Shift+Print        -> скриншот выделенной области"
   echo "   Ctrl+Print         -> скриншот активного окна"
   echo "   Alt+Space          -> сменить раскладку"
+  echo "   XF86MonBrightness  -> управление яркостью (Fn)"
+  echo "   XF86AudioPlay/Next -> медиа-клавиши (Fn)"
   echo "   Alt+Ctrl+t         -> сменить тему интерфейса"
   echo "   Alt+Ctrl+m         -> обновить layout мониторов + bar"
   echo "   Alt+Ctrl+l         -> кастомный lock screen (imba)"
@@ -4180,6 +4374,7 @@ main() {
   write_monitor_layout_script
   write_input_devices_script
   write_layout_scripts
+  write_terminal_modals_script
   write_theme_script
   write_launcher_script
   write_open_file_manager_script
