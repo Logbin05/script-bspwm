@@ -166,9 +166,37 @@ bin/
   imba-control-center
   open-file-manager
   arch-access
+iso/
+  airootfs/             # файлы, которые попадут в live-rootfs
+  extra-packages.x86_64 # дополнительный слой пакетов поверх releng
+tools/
+  unicron-iso-builder/  # Rust-сборщик ISO (обёртка над mkarchiso)
 ```
 
-## 9) Лицензия
+## 9) Сборка Кастомного ISO
+
+Собирать лучше на Arch Linux (или в Arch VM под Windows/macOS):
+
+```bash
+sudo pacman -S --needed archiso rsync rust cargo
+cargo run --manifest-path tools/unicron-iso-builder/Cargo.toml -- --clean
+```
+
+Результат:
+
+```text
+dist/bspwm-unicron-YYYY.MM.DD-x86_64.iso
+```
+
+Изменить встроенный источник bootstrap (repo/branch для `/usr/local/bin/unicron-bootstrap` внутри ISO):
+
+```bash
+cargo run --manifest-path tools/unicron-iso-builder/Cargo.toml -- \
+  --repo-url https://github.com/Logbin05/BSPWM-UNICRON.git \
+  --repo-ref dev
+```
+
+## 10) Лицензия
 
 Проект использует кастомную source-available лицензию:
 
