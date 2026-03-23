@@ -3552,7 +3552,11 @@ pgrep -x sxhkd >/dev/null || sxhkd &
 pgrep -x picom >/dev/null || picom --config "$HOME/.config/picom/picom.conf" &
 pgrep -x dunst >/dev/null || dunst &
 pgrep -x xss-lock >/dev/null || xss-lock --transfer-sleep-lock -- "$HOME/.local/bin/lock-screen" &
-"$HOME/.local/bin/configure-input-devices" >/dev/null 2>&1 || true
+if command -v timeout >/dev/null 2>&1; then
+  timeout 4s "$HOME/.local/bin/configure-input-devices" >/dev/null 2>&1 || true
+else
+  "$HOME/.local/bin/configure-input-devices" >/dev/null 2>&1 || true
+fi
 
 xsetroot -cursor_name left_ptr
 xset s 300 300
@@ -3835,41 +3839,39 @@ super + m
 alt + m
     bspc desktop -l next
 
-# volume
-XF86AudioRaiseVolume
-    pactl set-sink-volume @DEFAULT_SINK@ +5%
-
-XF86AudioLowerVolume
-    pactl set-sink-volume @DEFAULT_SINK@ -5%
-
-XF86AudioMute
+# F-row actions (обычно работают как Fn+F1..F12 на laptop action-keys)
+F1
     pactl set-sink-mute @DEFAULT_SINK@ toggle
 
-# brightness (Fn + F-keys on most laptops)
-XF86MonBrightnessUp
-    brightnessctl set +7%
+F2
+    pactl set-sink-volume @DEFAULT_SINK@ -5%
 
-XF86MonBrightnessDown
-    brightnessctl set 7%-
+F3
+    pactl set-sink-volume @DEFAULT_SINK@ +5%
 
-XF86KbdBrightnessUp
-    brightnessctl -d '*kbd_backlight*' set +1 || true
-
-XF86KbdBrightnessDown
+F5
     brightnessctl -d '*kbd_backlight*' set 1- || true
 
-# media (Fn + F-keys on many laptops)
-XF86AudioPlay
-    playerctl play-pause || true
+F6
+    brightnessctl -d '*kbd_backlight*' set +1 || true
 
-XF86AudioNext
-    playerctl next || true
-
-XF86AudioPrev
+F7
     playerctl previous || true
 
-XF86AudioStop
+F8
+    playerctl play-pause || true
+
+F9
+    playerctl next || true
+
+F10
     playerctl stop || true
+
+F11
+    brightnessctl set 7%-
+
+F12
+    brightnessctl set +7%
 EOF
 }
 
@@ -4771,8 +4773,7 @@ print_next_steps() {
   echo "   Alt+Space          -> сменить раскладку"
   echo "   Alt+Ctrl+h         -> shell help (RU/EN)"
   echo "   Alt+Ctrl+z         -> меню timezone/NTP"
-  echo "   XF86MonBrightness  -> управление яркостью (Fn)"
-  echo "   XF86AudioPlay/Next -> медиа-клавиши (Fn)"
+  echo "   Fn + F1..F12       -> мультимедиа/яркость (через бинды F-keys)"
   echo "   Alt+Ctrl+t         -> сменить тему интерфейса"
   echo "   Alt+Ctrl+m         -> обновить layout мониторов + bar"
   echo "   Alt+Ctrl+l         -> кастомный lock screen (imba)"
