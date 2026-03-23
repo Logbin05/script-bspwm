@@ -533,6 +533,8 @@ write_self_update_script() {
 set -euo pipefail
 
 state_file="${XDG_CONFIG_HOME:-$HOME/.config}/imba-bspwm/source-dir"
+cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/imba-bspwm"
+apply_log="${cache_dir}/update-apply.log"
 
 usage() {
   cat <<'USAGE'
@@ -560,6 +562,18 @@ fail() {
   printf '[ERROR] %s\n' "${msg}" >&2
   notify_msg "Script update failed" "${msg}"
   exit 1
+}
+
+show_apply_log_tail() {
+  [[ -f "${apply_log}" ]] || return 0
+  printf '\n[INFO] Последние строки лога автоприменения (%s):\n' "${apply_log}" >&2
+  tail -n 80 "${apply_log}" >&2 || true
+}
+
+run_apply_inline() {
+  mkdir -p "${cache_dir}"
+  : > "${apply_log}"
+  (cd "${repo_dir}" && ./script.sh 2>&1 | tee "${apply_log}")
 }
 
 store_repo() {
@@ -725,7 +739,10 @@ printf '[INFO] Применяю обновление: запускаю %s\n' "${
 notify_msg "Script updater" "Обновление получено, запускаю применение..."
 
 if [[ -t 1 ]]; then
-  (cd "${repo_dir}" && ./script.sh) || fail "Автоприменение завершилось с ошибкой."
+  if ! run_apply_inline; then
+    show_apply_log_tail
+    fail "Автоприменение завершилось с ошибкой. Лог: ${apply_log}"
+  fi
   printf '[OK] Обновление применено.\n'
   notify_msg "Script updater" "Обновление успешно применено."
   exit 0
@@ -734,12 +751,19 @@ fi
 if [[ -n "${DISPLAY:-}" ]] && command -v alacritty >/dev/null 2>&1; then
   printf '[INFO] Открою отдельное окно терминала для применения обновления.\n'
   repo_q=""
+  cache_q=""
+  log_q=""
   printf -v repo_q '%q' "${repo_dir}"
-  alacritty --class settings-editor -e bash -lc "cd ${repo_q}; ./script.sh; status=\$?; echo; if [[ \$status -eq 0 ]]; then echo '[OK] Обновление применено.'; else echo '[ERROR] Автоприменение завершилось с ошибкой.'; fi; read -n 1 -s -r -p 'Нажми любую клавишу для закрытия...'; exit \$status" >/dev/null 2>&1 &
+  printf -v cache_q '%q' "${cache_dir}"
+  printf -v log_q '%q' "${apply_log}"
+  alacritty --class settings-editor -e bash -lc "mkdir -p ${cache_q}; cd ${repo_q}; ./script.sh 2>&1 | tee ${log_q}; status=\$?; echo; if [[ \$status -eq 0 ]]; then echo '[OK] Обновление применено.'; else echo '[ERROR] Автоприменение завершилось с ошибкой.'; echo '[INFO] Лог: ${apply_log}'; echo '[INFO] Последние строки:'; tail -n 60 ${log_q} || true; fi; read -n 1 -s -r -p 'Нажми любую клавишу для закрытия...'; exit \$status" >/dev/null 2>&1 &
   exit 0
 fi
 
-(cd "${repo_dir}" && ./script.sh) || fail "Автоприменение завершилось с ошибкой."
+if ! run_apply_inline; then
+  show_apply_log_tail
+  fail "Автоприменение завершилось с ошибкой. Лог: ${apply_log}"
+fi
 printf '[OK] Обновление применено.\n'
 notify_msg "Script updater" "Обновление успешно применено."
 EOF
