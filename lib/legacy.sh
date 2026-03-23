@@ -106,6 +106,7 @@ PACKAGES=(
   rofi
   sxhkd
   thunar
+  tzdata
   ttf-jetbrains-mono-nerd
   wireplumber
   xdotool
@@ -164,6 +165,10 @@ BACKUP_TARGETS=(
   "${LOCAL_BIN}/power-menu"
   "${LOCAL_BIN}/extract-any"
   "${LOCAL_BIN}/take-screenshot"
+  "${LOCAL_BIN}/unicron-help"
+  "${LOCAL_BIN}/shell-help"
+  "${LOCAL_BIN}/unicron-time"
+  "${LOCAL_BIN}/shell-time"
   "${LOCAL_BIN}/imba-theme"
   "${LOCAL_BIN}/polybar-prepare"
   "${LOCAL_BIN}/polybar-refresh"
@@ -768,8 +773,37 @@ if [[ ! -f "${source_path}" ]]; then
   exit 1
 fi
 
+collect_connected_monitors() {
+  if ! command -v xrandr >/dev/null 2>&1; then
+    return
+  fi
+
+  xrandr --query 2>/dev/null | awk '/ connected/ { print $1 }'
+}
+
+apply_with_feh() {
+  local -a monitors=()
+  local -a cmd=(feh --no-fehbg --bg-fill)
+  local mon=""
+
+  while IFS= read -r mon; do
+    [[ -n "${mon}" ]] && monitors+=("${mon}")
+  done < <(collect_connected_monitors)
+
+  if (( ${#monitors[@]} > 1 )); then
+    # Pass one image per monitor so each output gets full-screen fill.
+    for mon in "${monitors[@]}"; do
+      cmd+=("${source_path}")
+    done
+  else
+    cmd+=("${source_path}")
+  fi
+
+  "${cmd[@]}"
+}
+
 if command -v feh >/dev/null 2>&1; then
-  feh --bg-fill "${source_path}"
+  apply_with_feh
 fi
 EOF
 
@@ -1634,6 +1668,18 @@ run_updates() {
   "$HOME/.local/bin/update-imba-script" || true
 }
 
+run_timezone() {
+  "$HOME/.local/bin/unicron-time" --pick || true
+}
+
+run_timesync() {
+  "$HOME/.local/bin/unicron-time" --sync || true
+}
+
+run_help() {
+  "$HOME/.local/bin/unicron-help" --pick || true
+}
+
 run_power() {
   "$HOME/.local/bin/power-menu" || true
 }
@@ -1662,6 +1708,9 @@ show_menu() {
 8) Screenshot
 9) Update setup (auto-apply)
 10) Power menu
+11) Timezone
+12) Internet time sync (NTP)
+13) Shell help (RU/EN)
 0) Exit
 MENU
 
@@ -1679,6 +1728,9 @@ MENU
       8) run_screenshot ;;
       9) run_updates ;;
       10) run_power ;;
+      11) run_timezone ;;
+      12) run_timesync ;;
+      13) run_help ;;
       0|q|Q|exit) exit 0 ;;
       *) printf 'Неизвестный пункт.\n'; sleep 1 ;;
     esac
@@ -1727,6 +1779,327 @@ exec "$HOME/.local/bin/terminal-modals" bluetooth "$@"
 EOF
 
   chmod +x "${LOCAL_BIN}/bluetooth-menu"
+}
+
+write_shell_help_script() {
+  cat > "${LOCAL_BIN}/unicron-help" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+state_file="${XDG_CONFIG_HOME:-$HOME/.config}/imba-bspwm/source-dir"
+repo_dir=""
+lang="auto"
+mode="full"
+
+usage() {
+  cat <<'USAGE'
+Usage: unicron-help [--lang ru|en] [--summary|--full] [--pick]
+
+Examples:
+  unicron-help
+  unicron-help --lang ru
+  unicron-help --lang en --summary
+  unicron-help --pick
+USAGE
+}
+
+resolve_repo_dir() {
+  if [[ -n "${UNICRON_REPO_DIR:-}" ]]; then
+    printf '%s' "${UNICRON_REPO_DIR}"
+    return
+  fi
+
+  if [[ -f "${state_file}" ]]; then
+    head -n 1 "${state_file}"
+    return
+  fi
+
+  printf '%s' "$PWD"
+}
+
+pick_lang() {
+  if command -v rofi >/dev/null 2>&1 && [[ -n "${DISPLAY:-}" ]]; then
+    printf '%s\n' "Русский (ru)" "English (en)" |
+      rofi -dmenu -i -p "help language" -theme "$HOME/.config/rofi/menu.rasi" || true
+    return
+  fi
+
+  printf 'Выбери язык (ru/en): '
+  read -r answer || true
+  printf '%s' "${answer}"
+}
+
+print_summary_ru() {
+  cat <<'RU'
+BSPWM-UNICRON shell help (RU)
+
+Главные команды:
+  ~/.local/bin/unicron-help
+  ~/.local/bin/shell-help
+  ~/.local/bin/unicron-time --show|--pick|--sync
+  ~/.local/bin/shell-time --show|--pick|--sync
+  ~/.local/bin/terminal-modals menu
+  ~/.local/bin/wifi-menu
+  ~/.local/bin/bluetooth-menu
+  ~/.local/bin/polybar-refresh
+  ~/.local/bin/update-imba-script
+
+Горячие клавиши:
+  Alt/Super + Space        -> смена раскладки
+  Alt/Super + Ctrl + p     -> применить Polybar
+  Alt/Super + Ctrl + b     -> перезапуск Polybar
+  Print/Shift+Print        -> скриншоты
+RU
+}
+
+print_summary_en() {
+  cat <<'EN'
+BSPWM-UNICRON shell help (EN)
+
+Main commands:
+  ~/.local/bin/unicron-help
+  ~/.local/bin/shell-help
+  ~/.local/bin/unicron-time --show|--pick|--sync
+  ~/.local/bin/shell-time --show|--pick|--sync
+  ~/.local/bin/terminal-modals menu
+  ~/.local/bin/wifi-menu
+  ~/.local/bin/bluetooth-menu
+  ~/.local/bin/polybar-refresh
+  ~/.local/bin/update-imba-script
+
+Hotkeys:
+  Alt/Super + Space        -> layout switch
+  Alt/Super + Ctrl + p     -> apply Polybar
+  Alt/Super + Ctrl + b     -> restart Polybar
+  Print/Shift+Print        -> screenshots
+EN
+}
+
+show_doc_file() {
+  local file="$1"
+
+  if [[ ! -f "${file}" ]]; then
+    return 1
+  fi
+
+  if [[ "${mode}" == "summary" ]]; then
+    return 1
+  fi
+
+  if command -v less >/dev/null 2>&1 && [[ -t 1 ]]; then
+    less "${file}"
+  else
+    cat "${file}"
+  fi
+
+  return 0
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --lang)
+      [[ $# -ge 2 ]] || { usage; exit 1; }
+      lang="$2"
+      shift 2
+      ;;
+    --summary)
+      mode="summary"
+      shift
+      ;;
+    --full)
+      mode="full"
+      shift
+      ;;
+    --pick)
+      picked="$(pick_lang)"
+      case "${picked}" in
+        *ru*|*Рус*) lang="ru" ;;
+        *en*|*Eng*) lang="en" ;;
+      esac
+      shift
+      ;;
+    *)
+      case "$1" in
+        ru|RU) lang="ru" ;;
+        en|EN) lang="en" ;;
+        *) usage; exit 1 ;;
+      esac
+      shift
+      ;;
+  esac
+done
+
+if [[ "${lang}" == "auto" ]]; then
+  if [[ "${LANG:-}" == ru* ]]; then
+    lang="ru"
+  else
+    lang="en"
+  fi
+fi
+
+repo_dir="$(resolve_repo_dir)"
+repo_dir="${repo_dir/#\~/$HOME}"
+repo_dir="$(realpath -m "${repo_dir}")"
+
+doc_ru="${repo_dir}/README.ru.md"
+doc_en="${repo_dir}/README.en.md"
+
+if [[ "${lang}" == "ru" ]]; then
+  show_doc_file "${doc_ru}" || print_summary_ru
+else
+  show_doc_file "${doc_en}" || print_summary_en
+fi
+EOF
+
+  chmod +x "${LOCAL_BIN}/unicron-help"
+
+  cat > "${LOCAL_BIN}/shell-help" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+exec "$HOME/.local/bin/unicron-help" "$@"
+EOF
+
+  chmod +x "${LOCAL_BIN}/shell-help"
+}
+
+write_timezone_script() {
+  cat > "${LOCAL_BIN}/unicron-time" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+notify_msg() {
+  local title="$1"
+  local body="$2"
+  if command -v notify-send >/dev/null 2>&1 && [[ -n "${DISPLAY:-}" ]]; then
+    notify-send "${title}" "${body}"
+  fi
+}
+
+usage() {
+  cat <<'USAGE'
+Usage: unicron-time [--show|--pick|--set <Zone>|--sync|--menu]
+
+  --show        Show current timezone and sync status
+  --pick        Pick timezone interactively
+  --set ZONE    Set timezone directly, e.g. Europe/Moscow
+  --sync        Enable internet time sync (NTP) and restart timesyncd
+  --menu        Open terminal menu
+USAGE
+}
+
+show_status() {
+  timedatectl status
+}
+
+set_timezone() {
+  local zone="$1"
+  [[ -n "${zone}" ]] || {
+    printf '[ERROR] Empty timezone value.\n' >&2
+    exit 1
+  }
+
+  timedatectl list-timezones | grep -Fxq "${zone}" || {
+    printf '[ERROR] Unknown timezone: %s\n' "${zone}" >&2
+    exit 1
+  }
+
+  sudo timedatectl set-timezone "${zone}"
+  printf '[OK] Timezone set to: %s\n' "${zone}"
+  notify_msg "Timezone updated" "${zone}"
+}
+
+pick_timezone() {
+  local zone=""
+
+  if command -v rofi >/dev/null 2>&1 && [[ -n "${DISPLAY:-}" ]]; then
+    zone="$(
+      timedatectl list-timezones |
+        rofi -dmenu -i -p "timezone" -theme "$HOME/.config/rofi/menu.rasi" || true
+    )"
+  else
+    printf 'Timezone (example: Europe/Moscow): '
+    read -r zone || true
+  fi
+
+  [[ -n "${zone}" ]] || exit 0
+  set_timezone "${zone}"
+}
+
+enable_sync() {
+  sudo timedatectl set-ntp true
+  sudo systemctl restart systemd-timesyncd.service >/dev/null 2>&1 || true
+  printf '[OK] NTP internet sync enabled.\n'
+  notify_msg "Time sync" "NTP sync enabled"
+  timedatectl show -p Timezone -p NTPSynchronized -p NTP --value
+}
+
+menu() {
+  while true; do
+    clear
+    cat <<'MENU'
+=== BSPWM-UNICRON Time Menu ===
+1) Show current time status
+2) Pick timezone
+3) Enable internet sync (NTP)
+0) Exit
+MENU
+    printf 'Выбор: '
+    read -r choice || true
+
+    case "${choice}" in
+      1) show_status; read -n 1 -s -r -p "Нажми любую клавишу..."; echo ;;
+      2) pick_timezone; read -n 1 -s -r -p "Нажми любую клавишу..."; echo ;;
+      3) enable_sync; read -n 1 -s -r -p "Нажми любую клавишу..."; echo ;;
+      0|q|Q|exit) exit 0 ;;
+      *) printf 'Неизвестный пункт.\n'; sleep 1 ;;
+    esac
+  done
+}
+
+mode="${1:-}"
+
+case "${mode}" in
+  -h|--help)
+    usage
+    ;;
+  --show)
+    show_status
+    ;;
+  --pick)
+    pick_timezone
+    ;;
+  --set)
+    [[ $# -ge 2 ]] || { usage; exit 1; }
+    set_timezone "$2"
+    ;;
+  --sync)
+    enable_sync
+    ;;
+  --menu|"")
+    menu
+    ;;
+  *)
+    usage
+    exit 1
+    ;;
+esac
+EOF
+
+  chmod +x "${LOCAL_BIN}/unicron-time"
+
+  cat > "${LOCAL_BIN}/shell-time" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+exec "$HOME/.local/bin/unicron-time" "$@"
+EOF
+
+  chmod +x "${LOCAL_BIN}/shell-time"
 }
 
 write_polybar_features_config() {
@@ -2186,6 +2559,9 @@ choices="$(
     'Распаковать архив' \
     'Скриншот' \
     'Терминальные модалки' \
+    'Часовой пояс' \
+    'Синхронизация времени' \
+    'Shell help' \
     'Приватные файлы (arch-access)' \
     'Обновить setup (auto-apply)' \
     'Перезапустить bar' \
@@ -2230,6 +2606,9 @@ case "${choice}" in
   "Распаковать архив") exec "$HOME/.local/bin/extract-any" --pick ;;
   "Скриншот") exec "$HOME/.local/bin/take-screenshot" --pick ;;
   "Терминальные модалки") exec "$HOME/.local/bin/terminal-modals" menu ;;
+  "Часовой пояс") exec "$HOME/.local/bin/unicron-time" --pick ;;
+  "Синхронизация времени") exec "$HOME/.local/bin/unicron-time" --sync ;;
+  "Shell help") exec "$HOME/.local/bin/unicron-help" --pick ;;
   "Приватные файлы (arch-access)") exec "$HOME/.local/bin/arch-access" ;;
   "Обновить setup (auto-apply)") exec "$HOME/.local/bin/update-imba-script" ;;
   "Перезапустить bar") exec "$HOME/.local/bin/launch-polybar" ;;
@@ -2256,6 +2635,9 @@ choice="$(
     'Распаковать архив' \
     'Скриншот' \
     'Терминальные модалки' \
+    'Часовой пояс' \
+    'Синхронизация времени' \
+    'Shell help' \
     'Трекпад' \
     'Приватные файлы' \
     'Обновить setup (auto-apply)' \
@@ -2273,6 +2655,9 @@ case "${choice}" in
   "Распаковать архив") exec "$HOME/.local/bin/extract-any" --pick ;;
   "Скриншот") exec "$HOME/.local/bin/take-screenshot" --pick ;;
   "Терминальные модалки") exec "$HOME/.local/bin/terminal-modals" menu ;;
+  "Часовой пояс") exec "$HOME/.local/bin/unicron-time" --pick ;;
+  "Синхронизация времени") exec "$HOME/.local/bin/unicron-time" --sync ;;
+  "Shell help") exec "$HOME/.local/bin/unicron-help" --pick ;;
   "Трекпад") exec "$HOME/.local/bin/configure-input-devices" ;;
   "Приватные файлы") exec "$HOME/.local/bin/arch-access" ;;
   "Обновить setup (auto-apply)") exec "$HOME/.local/bin/update-imba-script" ;;
@@ -2559,8 +2944,11 @@ open_target() {
     display) exec arandr ;;
     display-layout) exec "$HOME/.local/bin/apply-monitor-layout" ;;
     layout) exec "$HOME/.local/bin/toggle-layout" ;;
+    timezone) exec "$HOME/.local/bin/unicron-time" --pick ;;
+    timesync) exec "$HOME/.local/bin/unicron-time" --sync ;;
     trackpad) exec "$HOME/.local/bin/configure-input-devices" ;;
     terminal-modals) exec "$HOME/.local/bin/terminal-modals" menu ;;
+    shell-help) exec "$HOME/.local/bin/unicron-help" --pick ;;
     bar) exec "$HOME/.local/bin/app-settings" panel ;;
     bar-refresh) exec "$HOME/.local/bin/polybar-refresh" ;;
     theme) exec "$HOME/.local/bin/imba-theme" --pick ;;
@@ -2600,6 +2988,8 @@ choice="$(
     "Мониторы" "Положение экранов и разрешение" \
     "Обновить layout мониторов" "Переразложить рабочие столы для 2+ мониторов" \
     "Раскладка" "Сменить язык клавиатуры (EN/RU)" \
+    "Часовой пояс" "Выбрать timezone (Europe/Moscow и т.д.)" \
+    "Синхронизация времени" "Включить авто-синхронизацию времени через интернет (NTP)" \
     "Терминальные модалки" "Wi-Fi/Bluetooth и другие меню в формате терминала" \
     "Трекпад" "Включить tap-to-click, natural scroll и libinput tweaks" \
     "Тема интерфейса" "Быстрое переключение готовых тем (ocean/sunset/forest/nord/graphite)" \
@@ -2613,6 +3003,7 @@ choice="$(
     "SSH ключ" "Привязка SSH ключа к учётке и авто-agent" \
     "Приватные файлы" "Открыть защищённые пути через arch-access" \
     "Обновить setup" "Проверить обновления и автоматически применить script.sh" \
+    "Shell help" "Показать документацию в консоли (RU/EN)" \
     "Обновления" "Полное обновление Arch-системы" \
     "Питание" "Lock, suspend, reboot и shutdown" \
     --button="Открыть:0" \
@@ -2628,6 +3019,8 @@ case "${selection}" in
   Мониторы) open_target display ;;
   "Обновить layout мониторов") open_target display-layout ;;
   Раскладка) open_target layout ;;
+  "Часовой пояс") open_target timezone ;;
+  "Синхронизация времени") open_target timesync ;;
   "Терминальные модалки") open_target terminal-modals ;;
   Трекпад) open_target trackpad ;;
   "Тема интерфейса") open_target theme ;;
@@ -2641,6 +3034,7 @@ case "${selection}" in
   "SSH ключ") open_target ssh ;;
   "Приватные файлы") open_target private-files ;;
   "Обновить setup") open_target script-updates ;;
+  "Shell help") open_target shell-help ;;
   Обновления) open_target updates ;;
   Питание) open_target power ;;
 esac
@@ -3293,6 +3687,20 @@ super + space
 alt + space
     ~/.local/bin/toggle-layout
 
+# shell docs/help (RU/EN)
+super + ctrl + h
+    ~/.local/bin/unicron-help --pick
+
+alt + ctrl + h
+    ~/.local/bin/unicron-help --pick
+
+# timezone and internet time sync menu
+super + ctrl + z
+    ~/.local/bin/unicron-time --menu
+
+alt + ctrl + z
+    ~/.local/bin/unicron-time --menu
+
 # close focused window
 super + q
     bspc node -c
@@ -3823,8 +4231,8 @@ active-opacity = 1.0;
 frame-opacity = 1.0;
 inactive-dim = 0.05;
 
-corner-radius = 18;
-detect-rounded-corners = true;
+corner-radius = 0;
+detect-rounded-corners = false;
 blur-method = "dual_kawase";
 blur-strength = 8;
 blur-background-exclude = [
@@ -4289,25 +4697,33 @@ print_next_steps() {
   echo "9. Терминальные модалки (Wi-Fi/Bluetooth/и т.д.):"
   echo "   ~/.local/bin/terminal-modals menu"
   echo
-  echo "10. Если хочешь привязать свой SSH ключ вручную:"
+  echo "10. Shell help и документация (RU/EN):"
+  echo "    ~/.local/bin/unicron-help --pick"
+  echo "    ~/.local/bin/shell-help --pick"
+  echo
+  echo "11. Часовой пояс и интернет-синхронизация:"
+  echo "    ~/.local/bin/unicron-time --menu"
+  echo "    ~/.local/bin/shell-time --menu"
+  echo
+  echo "12. Если хочешь привязать свой SSH ключ вручную:"
   echo "   ~/.local/bin/bind-ssh-key --pick"
   echo
-  echo "11. Доступ к приватным файлам:"
+  echo "13. Доступ к приватным файлам:"
   echo "   ~/.local/bin/arch-access"
   echo
-  echo "12. Обновление самого setup-скрипта:"
+  echo "14. Обновление самого setup-скрипта:"
   echo "   ~/.local/bin/update-imba-script"
   echo
-  echo "13. Кастомизация bar без ломки core:"
+  echo "15. Кастомизация bar без ломки core:"
   echo "   ~/.config/polybar/config.ini"
   echo "   ~/.config/polybar/features.ini"
   echo "   ~/.local/bin/polybar-refresh"
   echo "   ~/.local/bin/polybar-preset"
   echo
-  echo "14. Перезагрузи систему:"
+  echo "16. Перезагрузи систему:"
   echo "   sudo reboot"
   echo
-  echo "15. Главные хоткеи:"
+  echo "17. Главные хоткеи:"
   echo "   Alt+Return         -> терминал в тайлинге"
   echo "   Alt+Shift+Return   -> ещё один терминал"
   echo "   Alt+d              -> App Deck / выбор приложений"
@@ -4329,6 +4745,8 @@ print_next_steps() {
   echo "   Shift+Print        -> скриншот выделенной области"
   echo "   Ctrl+Print         -> скриншот активного окна"
   echo "   Alt+Space          -> сменить раскладку"
+  echo "   Alt+Ctrl+h         -> shell help (RU/EN)"
+  echo "   Alt+Ctrl+z         -> меню timezone/NTP"
   echo "   XF86MonBrightness  -> управление яркостью (Fn)"
   echo "   XF86AudioPlay/Next -> медиа-клавиши (Fn)"
   echo "   Alt+Ctrl+t         -> сменить тему интерфейса"
@@ -4375,6 +4793,8 @@ main() {
   write_input_devices_script
   write_layout_scripts
   write_terminal_modals_script
+  write_shell_help_script
+  write_timezone_script
   write_theme_script
   write_launcher_script
   write_open_file_manager_script
