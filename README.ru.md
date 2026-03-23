@@ -38,6 +38,8 @@ sudo reboot
 - `Alt+Ctrl+p` / `Super+Ctrl+p`: применить feature-тогглы polybar
 - `Alt+Ctrl+t` / `Super+Ctrl+t`: выбор темы интерфейса
 - `Alt+Space` / `Super+Space`: сменить раскладку (EN/RU)
+- `Alt+Ctrl+h` / `Super+Ctrl+h`: shell help/документация (RU/EN)
+- `Alt+Ctrl+z` / `Super+Ctrl+z`: меню часового пояса и NTP
 - `Alt+Ctrl+w` / `Super+Ctrl+w`: выбор обоев
 - `Alt+Ctrl+x` / `Super+Ctrl+x`: распаковка архива
 - `Alt+Ctrl+a` / `Super+Ctrl+a`: запуск `arch-access`
@@ -69,6 +71,10 @@ sudo reboot
 - `~/.local/bin/apply-monitor-layout`: переприменить раскладку мониторов
 - `~/.local/bin/configure-input-devices`: твики trackpad/libinput
 - `~/.local/bin/update-imba-script`: обновить репозиторий и автоматически применить `./script.sh` (флаг `--no-apply` выключает авто-применение)
+- `~/.local/bin/unicron-help --pick`: документация в shell с выбором языка
+- `~/.local/bin/shell-help --pick`: короткий alias для shell-документации (аналог help)
+- `~/.local/bin/unicron-time --menu`: интерактивное меню timezone и синхронизации времени
+- `~/.local/bin/shell-time --menu`: короткий alias для timezone/NTP меню
 
 ## 5) Важные конфиги
 

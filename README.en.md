@@ -38,6 +38,8 @@ All major bindings work with both `Alt` and `Super`.
 - `Alt+Ctrl+p` / `Super+Ctrl+p`: apply polybar features
 - `Alt+Ctrl+t` / `Super+Ctrl+t`: pick desktop theme
 - `Alt+Space` / `Super+Space`: switch keyboard layout (EN/RU)
+- `Alt+Ctrl+h` / `Super+Ctrl+h`: shell docs/help (RU/EN)
+- `Alt+Ctrl+z` / `Super+Ctrl+z`: timezone/NTP menu
 - `Alt+Ctrl+w` / `Super+Ctrl+w`: pick wallpaper
 - `Alt+Ctrl+x` / `Super+Ctrl+x`: extract archive
 - `Alt+Ctrl+a` / `Super+Ctrl+a`: open `arch-access`
@@ -69,6 +71,10 @@ All major bindings work with both `Alt` and `Super`.
 - `~/.local/bin/apply-monitor-layout`: re-apply multi-monitor layout
 - `~/.local/bin/configure-input-devices`: trackpad/libinput tweaks
 - `~/.local/bin/update-imba-script`: update repo and auto-apply `./script.sh` (use `--no-apply` to skip apply)
+- `~/.local/bin/unicron-help --pick`: shell documentation with language picker
+- `~/.local/bin/shell-help --pick`: short alias for shell docs (help-like command)
+- `~/.local/bin/unicron-time --menu`: interactive timezone and internet-sync menu
+- `~/.local/bin/shell-time --menu`: short alias for timezone/NTP menu
 
 ## 5) Key config files
 
