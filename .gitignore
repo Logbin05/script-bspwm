@@ -1,0 +1,5 @@
+/.build/
+/dist/
+*.iso
+/iso
+/tools/unicron-iso-builder/target/
