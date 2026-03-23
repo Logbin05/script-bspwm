@@ -46,6 +46,8 @@ sudo reboot
 - `Print`: скриншот всего экрана
 - `Shift+Print`: скриншот области
 - `Ctrl+Print`: скриншот активного окна
+- `XF86MonBrightnessUp/Down`: яркость (Fn-комбинации на большинстве ноутбуков)
+- `XF86AudioPlay/Next/Prev/Stop`: медиа-клавиши (Fn-комбинации)
 
 ## 4) Основные helper-команды
 
@@ -55,6 +57,9 @@ sudo reboot
 - `~/.local/bin/imba-theme --pick`: переключить тему интерфейса
 - `~/.local/bin/set-wallpaper --pick`: выбрать обои
 - `~/.local/bin/toggle-layout`: сменить раскладку клавиатуры (EN/RU)
+- `~/.local/bin/wifi-menu`: терминальная Wi-Fi модалка (`nmtui`)
+- `~/.local/bin/bluetooth-menu`: терминальная Bluetooth модалка (`bluetoothctl`)
+- `~/.local/bin/terminal-modals`: единый терминальный хаб модалок (Wi-Fi/Bluetooth/и т.д.)
 - `~/.local/bin/take-screenshot --pick`: меню скриншотов
 - `~/.local/bin/extract-any --pick`: распаковка архивов (`zip/rar/7z/tar/...`)
 - `~/.local/bin/open-file-manager`: единая команда файлового менеджера

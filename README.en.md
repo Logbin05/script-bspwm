@@ -46,6 +46,8 @@ All major bindings work with both `Alt` and `Super`.
 - `Print`: full screenshot
 - `Shift+Print`: area screenshot
 - `Ctrl+Print`: active window screenshot
+- `XF86MonBrightnessUp/Down`: brightness control (Fn combos on most laptops)
+- `XF86AudioPlay/Next/Prev/Stop`: media control (Fn combos on most laptops)
 
 ## 4) Helper commands
 
@@ -55,6 +57,9 @@ All major bindings work with both `Alt` and `Super`.
 - `~/.local/bin/imba-theme --pick`: switch desktop theme
 - `~/.local/bin/set-wallpaper --pick`: choose wallpaper
 - `~/.local/bin/toggle-layout`: switch keyboard layout (EN/RU)
+- `~/.local/bin/wifi-menu`: terminal Wi-Fi modal (`nmtui`)
+- `~/.local/bin/bluetooth-menu`: terminal Bluetooth modal (`bluetoothctl`)
+- `~/.local/bin/terminal-modals`: unified terminal modal hub (Wi-Fi/Bluetooth/etc.)
 - `~/.local/bin/take-screenshot --pick`: screenshot menu
 - `~/.local/bin/extract-any --pick`: extract archives (`zip/rar/7z/tar/...`)
 - `~/.local/bin/open-file-manager`: file manager wrapper
