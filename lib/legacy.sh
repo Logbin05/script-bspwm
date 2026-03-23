@@ -533,6 +533,8 @@ write_self_update_script() {
 set -euo pipefail
 
 state_file="${XDG_CONFIG_HOME:-$HOME/.config}/imba-bspwm/source-dir"
+cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/imba-bspwm"
+apply_log="${cache_dir}/update-apply.log"
 
 usage() {
   cat <<'USAGE'
@@ -560,6 +562,18 @@ fail() {
   printf '[ERROR] %s\n' "${msg}" >&2
   notify_msg "Script update failed" "${msg}"
   exit 1
+}
+
+show_apply_log_tail() {
+  [[ -f "${apply_log}" ]] || return 0
+  printf '\n[INFO] Последние строки лога автоприменения (%s):\n' "${apply_log}" >&2
+  tail -n 80 "${apply_log}" >&2 || true
+}
+
+run_apply_inline() {
+  mkdir -p "${cache_dir}"
+  : > "${apply_log}"
+  (cd "${repo_dir}" && ./script.sh 2>&1 | tee "${apply_log}")
 }
 
 store_repo() {
@@ -725,7 +739,10 @@ printf '[INFO] Применяю обновление: запускаю %s\n' "${
 notify_msg "Script updater" "Обновление получено, запускаю применение..."
 
 if [[ -t 1 ]]; then
-  (cd "${repo_dir}" && ./script.sh) || fail "Автоприменение завершилось с ошибкой."
+  if ! run_apply_inline; then
+    show_apply_log_tail
+    fail "Автоприменение завершилось с ошибкой. Лог: ${apply_log}"
+  fi
   printf '[OK] Обновление применено.\n'
   notify_msg "Script updater" "Обновление успешно применено."
   exit 0
@@ -734,12 +751,19 @@ fi
 if [[ -n "${DISPLAY:-}" ]] && command -v alacritty >/dev/null 2>&1; then
   printf '[INFO] Открою отдельное окно терминала для применения обновления.\n'
   repo_q=""
+  cache_q=""
+  log_q=""
   printf -v repo_q '%q' "${repo_dir}"
-  alacritty --class settings-editor -e bash -lc "cd ${repo_q}; ./script.sh; status=\$?; echo; if [[ \$status -eq 0 ]]; then echo '[OK] Обновление применено.'; else echo '[ERROR] Автоприменение завершилось с ошибкой.'; fi; read -n 1 -s -r -p 'Нажми любую клавишу для закрытия...'; exit \$status" >/dev/null 2>&1 &
+  printf -v cache_q '%q' "${cache_dir}"
+  printf -v log_q '%q' "${apply_log}"
+  alacritty --class settings-editor -e bash -lc "mkdir -p ${cache_q}; cd ${repo_q}; ./script.sh 2>&1 | tee ${log_q}; status=\$?; echo; if [[ \$status -eq 0 ]]; then echo '[OK] Обновление применено.'; else echo '[ERROR] Автоприменение завершилось с ошибкой.'; echo '[INFO] Лог: ${apply_log}'; echo '[INFO] Последние строки:'; tail -n 60 ${log_q} || true; fi; read -n 1 -s -r -p 'Нажми любую клавишу для закрытия...'; exit \$status" >/dev/null 2>&1 &
   exit 0
 fi
 
-(cd "${repo_dir}" && ./script.sh) || fail "Автоприменение завершилось с ошибкой."
+if ! run_apply_inline; then
+  show_apply_log_tail
+  fail "Автоприменение завершилось с ошибкой. Лог: ${apply_log}"
+fi
 printf '[OK] Обновление применено.\n'
 notify_msg "Script updater" "Обновление успешно применено."
 EOF
@@ -3528,7 +3552,11 @@ pgrep -x sxhkd >/dev/null || sxhkd &
 pgrep -x picom >/dev/null || picom --config "$HOME/.config/picom/picom.conf" &
 pgrep -x dunst >/dev/null || dunst &
 pgrep -x xss-lock >/dev/null || xss-lock --transfer-sleep-lock -- "$HOME/.local/bin/lock-screen" &
-"$HOME/.local/bin/configure-input-devices" >/dev/null 2>&1 || true
+if command -v timeout >/dev/null 2>&1; then
+  timeout 4s "$HOME/.local/bin/configure-input-devices" >/dev/null 2>&1 || true
+else
+  "$HOME/.local/bin/configure-input-devices" >/dev/null 2>&1 || true
+fi
 
 xsetroot -cursor_name left_ptr
 xset s 300 300
@@ -3811,41 +3839,39 @@ super + m
 alt + m
     bspc desktop -l next
 
-# volume
-XF86AudioRaiseVolume
-    pactl set-sink-volume @DEFAULT_SINK@ +5%
-
-XF86AudioLowerVolume
-    pactl set-sink-volume @DEFAULT_SINK@ -5%
-
-XF86AudioMute
+# F-row actions (обычно работают как Fn+F1..F12 на laptop action-keys)
+F1
     pactl set-sink-mute @DEFAULT_SINK@ toggle
 
-# brightness (Fn + F-keys on most laptops)
-XF86MonBrightnessUp
-    brightnessctl set +7%
+F2
+    pactl set-sink-volume @DEFAULT_SINK@ -5%
 
-XF86MonBrightnessDown
-    brightnessctl set 7%-
+F3
+    pactl set-sink-volume @DEFAULT_SINK@ +5%
 
-XF86KbdBrightnessUp
-    brightnessctl -d '*kbd_backlight*' set +1 || true
-
-XF86KbdBrightnessDown
+F5
     brightnessctl -d '*kbd_backlight*' set 1- || true
 
-# media (Fn + F-keys on many laptops)
-XF86AudioPlay
-    playerctl play-pause || true
+F6
+    brightnessctl -d '*kbd_backlight*' set +1 || true
 
-XF86AudioNext
-    playerctl next || true
-
-XF86AudioPrev
+F7
     playerctl previous || true
 
-XF86AudioStop
+F8
+    playerctl play-pause || true
+
+F9
+    playerctl next || true
+
+F10
     playerctl stop || true
+
+F11
+    brightnessctl set 7%-
+
+F12
+    brightnessctl set +7%
 EOF
 }
 
@@ -4747,8 +4773,7 @@ print_next_steps() {
   echo "   Alt+Space          -> сменить раскладку"
   echo "   Alt+Ctrl+h         -> shell help (RU/EN)"
   echo "   Alt+Ctrl+z         -> меню timezone/NTP"
-  echo "   XF86MonBrightness  -> управление яркостью (Fn)"
-  echo "   XF86AudioPlay/Next -> медиа-клавиши (Fn)"
+  echo "   Fn + F1..F12       -> мультимедиа/яркость (через бинды F-keys)"
   echo "   Alt+Ctrl+t         -> сменить тему интерфейса"
   echo "   Alt+Ctrl+m         -> обновить layout мониторов + bar"
   echo "   Alt+Ctrl+l         -> кастомный lock screen (imba)"

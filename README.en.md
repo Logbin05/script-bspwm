@@ -48,8 +48,7 @@ All major bindings work with both `Alt` and `Super`.
 - `Print`: full screenshot
 - `Shift+Print`: area screenshot
 - `Ctrl+Print`: active window screenshot
-- `XF86MonBrightnessUp/Down`: brightness control (Fn combos on most laptops)
-- `XF86AudioPlay/Next/Prev/Stop`: media control (Fn combos on most laptops)
+- `Fn+F1..F12`: volume/media/brightness controls (via F-row bindings)
 
 ## 4) Helper commands
 
